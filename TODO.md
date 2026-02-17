@@ -54,7 +54,7 @@ Use this file to track all work. Check off items when done, add your name when s
 
 | Ticket | Description | Status | Assignee | Target |
 |--------|-------------|--------|----------|--------|
-| #19 | Test `embed.py` cache scenarios | [ ] | | 80% coverage |
+| #19 | Test `embed.py` cache scenarios | [@Rita] | @Rita | 80% coverage - 5/6 tests pass |
 | #20 | Test `store.py` edge cases | [ ] | | 70% coverage |
 | #21 | Test `search.py` hybrid search | [ ] | | 60% coverage |
 | #22 | Test `ingest.py` document loading | [ ] | | 50% coverage |
