@@ -387,6 +387,7 @@ def _get_embedder_type() -> str:
     global _embedder_type
     
     if _embedder_type is not None:
+        # print(f"DEBUG: Using cached embedder type: {_embedder_type}")
         return _embedder_type
     
     # Default to PyTorch (always works)
@@ -394,6 +395,7 @@ def _get_embedder_type() -> str:
     
     # Check for AVX2
     has_avx2 = _has_avx2()
+    # print(f"DEBUG: Has AVX2: {has_avx2}")
     
     if has_avx2:
         # Only print once
@@ -404,10 +406,8 @@ def _get_embedder_type() -> str:
         else:
             # print("[Embed] ONNX not available, using PyTorch (compatible)")
             pass
-    else:
-        # print("[Embed] No AVX2 detected, using PyTorch (compatible)")
-        pass
     
+    # print(f"DEBUG: Final embedder type: {_embedder_type}")
     return _embedder_type
 
 def _load_onnx_model():

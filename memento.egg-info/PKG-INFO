@@ -1,0 +1,98 @@
+Metadata-Version: 2.4
+Name: memento
+Version: 0.2.2
+Summary: Persistent semantic memory for AI agents
+Author-email: Rita <rita@example.com>, Bob <bob@example.com>
+License: MIT
+Project-URL: Homepage, https://github.com/rollersrights/memento
+Project-URL: Repository, https://github.com/rollersrights/memento
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: sentence-transformers>=2.0.0
+Requires-Dist: numpy>=1.20.0
+Requires-Dist: rich>=10.0.0
+Dynamic: license-file
+
+# Memento
+
+**Persistent semantic memory for AI agents.** Local, fast, and privacy-focused.
+
+> *Memento gives AI agents persistent, semantic memory that survives sessions, scales efficiently, and recalls what matters—without drowning in context.*
+
+[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+## Why Memento?
+
+- **🧠 Token Efficient:** Semantic recall loads only relevant context, not full history
+- **⚡ Fast:** 274,000x speedup with LRU cache (9ms warm search)
+- **🪶 Lightweight:** SQLite + NumPy, no cloud dependencies
+- **🛡️ Resilient:** Survives crashes, auto-backup, auto-rollback
+- **🤝 Team Ready:** Proper GitHub workflow, documented, contributor-friendly
+
+## Quick Start
+
+```bash
+# Install
+git clone https://github.com/rollersrights/memento.git
+cd memento
+pip install -r requirements.txt
+
+# Store a memory
+./memento remember "The server IP is 192.168.1.155" --tags "infra"
+
+# Recall it
+./memento recall "where is the server?"
+```
+
+## The CLI
+
+Memento detects if you're a human or a script.
+
+**Human Mode (Rich Tables):**
+```text
+ID        Score   Text
+──────────────────────────────────────────
+a1b2c3d4  0.89    The server IP is...
+```
+
+**Script Mode (JSON):**
+```bash
+./memento recall "server" | jq .[0].text
+# "The server IP is 192.168.1.155"
+```
+
+## Architecture
+
+```
+┌──────────┐    ┌─────────────┐    ┌──────────────┐
+│  Query   │───▶│  RAM Cache  │───▶│  Disk Cache  │
+└──────────┘    │  (0.03ms)   │    │   (SQLite)   │
+                └──────┬──────┘    └──────┬───────┘
+                       │ (miss)           │ (miss)
+                ┌──────▼──────┐           │
+                │ ONNX/PyTorch│◀──────────┘
+                │  Inference  │
+                └─────────────┘
+```
+
+## Development
+
+Run the test suite:
+```bash
+./run_tests.sh
+```
+
+## License
+
+MIT

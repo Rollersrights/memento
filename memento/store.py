@@ -60,6 +60,8 @@ DEFAULT_DB_PATH = os.environ.get('MEMORY_DB_PATH', os.path.expanduser("~/.mement
 # Store instance cache — keyed by db_path for reuse
 _stores: Dict[str, 'MemoryStore'] = {}
 _stores_lock = threading.Lock()
+_rate_limit_cache: Dict[str, List[float]] = {}
+_rate_limit_lock = threading.Lock()
 
 
 def get_store(db_path: str = DEFAULT_DB_PATH) -> 'MemoryStore':
@@ -224,6 +226,29 @@ class MemoryStore:
         
         logger.info(f"Loaded {len(self._ids)} vectors into memory")
     
+    def _check_rate_limit(self, key: str, limit: int = 60, window: int = 60) -> bool:
+        """Simple rate limiter. Default 60 requests per 60 seconds."""
+        now = time.time()
+        with _rate_limit_lock:
+            if key not in _rate_limit_cache:
+                _rate_limit_cache[key] = []
+            
+            # Remove expired timestamps
+            _rate_limit_cache[key] = [t for t in _rate_limit_cache[key] if t > now - window]
+            
+            if len(_rate_limit_cache[key]) >= limit:
+                return False
+            
+            _rate_limit_cache[key].append(now)
+            return True
+
+    def _sanitize_text(self, text: str) -> str:
+        """Sanitize input text by removing control characters."""
+        if not text:
+            return ""
+        # Keep only printable characters and common whitespace
+        return "".join(char for char in text if char.isprintable() or char in "\n\r\t")
+
     def remember(
         self,
         text: str,
@@ -236,22 +261,16 @@ class MemoryStore:
     ) -> str:
         """
         Store a memory. Checks for near-duplicates before storing.
-        
-        Args:
-            text: The text to remember
-            collection: Which collection (conversations/documents/knowledge)
-            importance: 0.0-1.0 relevance score
-            source: Where this came from
-            session_id: Session identifier
-            tags: Optional list of tags
-            **extra_metadata: Additional fields (ignored for now)
-        
-        Returns:
-            Document ID (existing or new)
-        
-        Raises:
-            ValidationError: If input is invalid
         """
+        # Rate limit check (by source if provided, otherwise global)
+        rl_key = source or "global"
+        if not self._check_rate_limit(rl_key):
+            logger.warning(f"Rate limit exceeded for source: {rl_key}")
+            raise StorageError(f"Rate limit exceeded for source: {rl_key}")
+
+        # Sanitize input
+        text = self._sanitize_text(text)
+        
         # Validate inputs
         if not text or not text.strip():
             raise ValidationError("Memory text cannot be empty")
@@ -404,6 +423,9 @@ class MemoryStore:
         before: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """Internal recall implementation (called with timeout wrapper)."""
+        # Sanitize query
+        query = self._sanitize_text(query)
+        
         # Handle imports for both module and direct execution
         try:
             from memento.embed import embed

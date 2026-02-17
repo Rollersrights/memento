@@ -1,0 +1,81 @@
+#!/bin/bash
+# Memento wrapper - Delegates to Python CLI or handles specialized bash tasks
+
+MEMENTO_PATH=/home/brett/.openclaw/workspace/memento
+VENV=/home/brett/.venv
+CLI="$MEMENTO_PATH/scripts/cli.py"
+
+# Activate environment
+source "$VENV/bin/activate"
+
+case "$1" in
+    # Core commands -> Delegate to Python CLI
+    store|remember|add)
+        shift
+        python3 "$CLI" remember "$@"
+        ;;
+    search|recall|find|q)
+        shift
+        python3 "$CLI" recall "$@"
+        ;;
+    rm|delete|forget)
+        shift
+        python3 "$CLI" delete "$@"
+        ;;
+    stats|info)
+        shift
+        python3 "$CLI" stats "$@"
+        ;;
+    dash|dashboard)
+        python3 "$MEMENTO_PATH/scripts/dashboard.py"
+        ;;
+    
+    # Specialized Bash Commands (Ingest, Rita Chat)
+    ingest)
+        shift
+        if [ -z "$1" ]; then
+            echo "Usage: memento ingest <file_path>"
+            exit 1
+        fi
+        cp "$1" ~/.memento/inbox/
+        echo "Queued for processing: $1"
+        ;;
+        
+    rita)
+        shift
+        case "$1" in
+            say|send)
+                shift
+                "$MEMENTO_PATH/scripts/rita-say.sh" "$@"
+                ;;
+            chat|live)
+                "$MEMENTO_PATH/scripts/rita-live-sync.sh"
+                ;;
+            sync)
+                # One-time sync
+                scp -i ~/.ssh/id_ed25519_bob \
+                    /home/brett/RITA_CHAT.md \
+                    bob@192.168.1.155:~/RITA_CHAT.md
+                echo "Synced to Rita"
+                ;;
+            show|cat)
+                cat /home/brett/RITA_CHAT.md
+                ;;
+            *)
+                echo "Rita chat commands:"
+                echo "  memento rita say <msg>    - Send message to Rita"
+                echo "  memento rita chat          - Start live chat (Ctrl+C to stop)"
+                echo "  memento rita sync          - One-time sync"
+                echo "  memento rita show          - Show full chat log"
+                ;;
+        esac
+        ;;
+        
+    *)
+        python3 "$CLI" --help
+        echo ""
+        echo "Additional:"
+        echo "  ingest <file>      - Queue file for ingestion"
+        echo "  rita ...           - Chat with Rita (federation)"
+        ;;
+esac
