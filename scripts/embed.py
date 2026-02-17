@@ -181,6 +181,10 @@ class PersistentCache:
                 )
         except Exception as e:
             print(f"Cache write error: {e}")
+    
+    def get_cache_key(self, text: str) -> str:
+        """Generate cache key for text (convenience method)."""
+        return _get_cache_key(text)
 
 # Global disk cache instance
 _disk_cache = PersistentCache()
