@@ -53,8 +53,10 @@ fn init_model(py: Python, model_path: Option<String>) -> PyResult<PyObject> {
         format!("{}/.memento/models/all-MiniLM-L6-v2.onnx", home)
     });
 
+    let model_path = std::path::PathBuf::from(model_path);
+
     // Load tokenizer
-    let tokenizer_path = std::path::Path::new(&model_path)
+    let tokenizer_path = model_path
         .parent()
         .unwrap_or(std::path::Path::new("."))
         .join("tokenizer.json");
@@ -78,11 +80,18 @@ fn init_model(py: Python, model_path: Option<String>) -> PyResult<PyObject> {
         let _ = tokenizer.with_truncation(Some(tokenizers::TruncationParams::default()));
     }
 
-    // Load ONNX model from file - this handles external data files correctly
-    let session = Session::builder()
-        .map_err(|e| EmbedError::Onnx(format!("Failed to create session builder: {}", e)))?
-        .commit_from_file(&model_path)
-        .map_err(|e| EmbedError::Onnx(format!("Failed to load model: {}", e)))?;
+    // Load ONNX model - change to model directory for external data file resolution
+    let model_dir = model_path.parent()
+        .ok_or_else(|| EmbedError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput, "Invalid model path"
+        )))?;
+    let model_filename = model_path.file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| EmbedError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput, "Invalid model filename"
+        )))?;
+    
+    let session = load_model_with_working_dir(model_dir, model_filename)?;
 
     let dimensions = 384;
     
@@ -102,9 +111,30 @@ fn init_model(py: Python, model_path: Option<String>) -> PyResult<PyObject> {
     info.set_item("backend", "onnx")?;
     info.set_item("version", env!("CARGO_PKG_VERSION"))?;
     info.set_item("status", "loaded")?;
-    info.set_item("model_path", model_path)?;
+    info.set_item("model_path", model_path.to_str().unwrap_or(""))?;
     
     Ok(info.into())
+}
+
+/// Load ONNX model by temporarily changing working directory to handle external data files
+fn load_model_with_working_dir(model_dir: &std::path::Path, model_filename: &str) -> Result<Session, EmbedError> {
+    let original_dir = std::env::current_dir()
+        .map_err(|e| EmbedError::Io(e))?;
+    
+    // Change to model directory so external data file can be found
+    std::env::set_current_dir(model_dir)
+        .map_err(|e| EmbedError::Io(e))?;
+    
+    // Load model
+    let result = Session::builder()
+        .map_err(|e| EmbedError::Onnx(format!("Failed to create session builder: {}", e)))?
+        .commit_from_memory(&std::fs::read(model_filename)?)
+        .map_err(|e| EmbedError::Onnx(format!("Failed to load model: {}", e)));
+    
+    // Restore original directory
+    let _ = std::env::set_current_dir(original_dir);
+    
+    result
 }
 
 /// Check if the model is loaded and ready.
@@ -150,6 +180,9 @@ fn embed_text(py: Python, text: String) -> PyResult<PyObject> {
 }
 
 /// Embed multiple texts in a batch.
+/// 
+/// Note: Currently processes texts individually due to model batch size constraints.
+/// This ensures correct results for any batch size.
 #[pyfunction]
 fn embed_batch(py: Python, texts: Vec<String>) -> PyResult<PyObject> {
     if texts.is_empty() {
@@ -157,11 +190,11 @@ fn embed_batch(py: Python, texts: Vec<String>) -> PyResult<PyObject> {
         return Ok(empty_list.into());
     }
     
-    let embeddings = embed_batch_internal(&texts)?;
-    
+    // Process each text individually to avoid batch size constraints
     let outer_list = PyList::empty_bound(py);
-    for emb in embeddings {
-        let inner_list: Bound<'_ , PyList> = PyList::new_bound(py, emb);
+    for text in texts {
+        let embedding = embed_text_internal(&text)?;
+        let inner_list: Bound<'_ , PyList> = PyList::new_bound(py, embedding);
         outer_list.append(inner_list)?;
     }
     
@@ -185,16 +218,18 @@ fn embed_batch_internal(texts: &[String]) -> Result<Vec<Vec<f32>>, EmbedError> {
     if state.session.is_none() || state.tokenizer.is_none() {
         drop(state);
         
-        let model_path = format!(
-            "{}/.memento/models/all-MiniLM-L6-v2.onnx",
-            std::env::var("HOME").unwrap_or_else(|_| ".".to_string())
-        );
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+        let model_path = std::path::PathBuf::from(format!(
+            "{}/.memento/models/all-MiniLM-L6-v2.onnx", home
+        ));
+        
+        let model_dir = model_path.parent()
+            .ok_or_else(|| EmbedError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput, "Invalid model path"
+            )))?;
         
         // Load tokenizer
-        let tokenizer_path = std::path::Path::new(&model_path)
-            .parent()
-            .unwrap_or(std::path::Path::new("."))
-            .join("tokenizer.json");
+        let tokenizer_path = model_dir.join("tokenizer.json");
 
         let tokenizer = Tokenizer::from_file(&tokenizer_path)
             .map_err(|e| EmbedError::Tokenizer(format!("Failed to load tokenizer: {}", e)))?;
@@ -203,11 +238,8 @@ fn embed_batch_internal(texts: &[String]) -> Result<Vec<Vec<f32>>, EmbedError> {
         tokenizer.with_padding(Some(tokenizers::PaddingParams::default()));
         let _ = tokenizer.with_truncation(Some(tokenizers::TruncationParams::default()));
 
-        // Load ONNX model from file
-        let session = Session::builder()
-            .map_err(|e| EmbedError::Onnx(format!("Failed to create session builder: {}", e)))?
-            .commit_from_file(&model_path)
-            .map_err(|e| EmbedError::Onnx(format!("Failed to load model: {}", e)))?;
+        // Load ONNX model
+        let session = load_model_with_working_dir(model_dir, "all-MiniLM-L6-v2.onnx")?;
 
         state = MODEL_STATE.lock().map_err(|e| {
             EmbedError::Inference(format!("Failed to lock model state: {}", e))
