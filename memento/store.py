@@ -9,10 +9,18 @@ import json
 import time
 import hashlib
 import sqlite3
-from typing import List, Dict, Optional, Any
+import threading
+import uuid
+from typing import List, Dict, Optional, Any, Tuple
 from pathlib import Path
 
 import numpy as np
+
+try:
+    import sqlite_vec
+    HAS_SQLITE_VEC = True
+except ImportError:
+    HAS_SQLITE_VEC = False
 
 try:
     from memento.logging_config import get_logger
@@ -20,6 +28,8 @@ try:
     from memento.migrations import run_migrations
     from memento.exceptions import StorageError, ValidationError
     from memento.models import Memory, SearchResult
+    from memento.vector_ops import normalize, batch_cosine_similarity
+    from memento.timeout import optional_timeout, QueryTimeoutError
 except ImportError:
     # Fallback if running directly without package structure
     import logging
@@ -34,6 +44,12 @@ except ImportError:
     class ValidationError(Exception): pass
     class Memory: pass
     class SearchResult: pass
+    # Timeout fallback
+    from contextlib import contextmanager
+    @contextmanager
+    def optional_timeout(seconds):
+        yield
+    class QueryTimeoutError(TimeoutError): pass
 
 logger = get_logger("store")
 config = get_config()
@@ -41,41 +57,47 @@ config = get_config()
 # Default storage path (override with MEMORY_DB_PATH env var)
 DEFAULT_DB_PATH = os.environ.get('MEMORY_DB_PATH', os.path.expanduser("~/.memento/memory.db"))
 
-# Singleton instance cache
-_store_instance = None
-_store_path = None
+# Store instance cache — keyed by db_path for reuse
+_stores: Dict[str, 'MemoryStore'] = {}
+_stores_lock = threading.Lock()
+
+
+def get_store(db_path: str = DEFAULT_DB_PATH) -> 'MemoryStore':
+    """
+    Factory function to get or create a MemoryStore.
+    
+    Reuses existing instances for the same db_path.
+    Preferred over direct instantiation for singleton behavior.
+    """
+    with _stores_lock:
+        if db_path not in _stores:
+            _stores[db_path] = MemoryStore(db_path)
+        return _stores[db_path]
+
 
 class MemoryStore:
     """High-level interface for semantic memory using NumPy + SQLite.
     
-    Uses singleton pattern - multiple instantiations with same db_path 
-    return the same instance to avoid connection overhead.
+    Use get_store() for cached/singleton access.
+    Direct instantiation always creates a new instance (useful for testing).
     """
     
-    def __new__(cls, db_path: str = DEFAULT_DB_PATH):
-        """Singleton pattern - reuse existing instance for same path."""
-        global _store_instance, _store_path
-        
-        if _store_instance is not None and _store_path == db_path:
-            return _store_instance
-        
-        # Create new instance
-        instance = super().__new__(cls)
-        _store_instance = instance
-        _store_path = db_path
-        return instance
-    
     def __init__(self, db_path: str = DEFAULT_DB_PATH):
-        """Initialize the memory store. Safe to call multiple times (singleton)."""
-        # Skip re-initialization if already initialized
-        if hasattr(self, '_initialized') and self._initialized:
-            return
+        """Initialize the memory store."""
         
         self.db_path = db_path
+        self._write_lock = threading.Lock()
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         
         # Connect to SQLite with thread safety
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
+        
+        # Load sqlite-vec extension if available
+        if HAS_SQLITE_VEC:
+            self.conn.enable_load_extension(True)
+            sqlite_vec.load(self.conn)
+            self.conn.enable_load_extension(False)
+            logger.info("Loaded sqlite-vec extension")
         
         # Enable WAL mode for better concurrency
         self.conn.execute("PRAGMA journal_mode=WAL")
@@ -94,11 +116,19 @@ class MemoryStore:
         self._index_needs_refresh = True
         
         self._init_tables()
+        self._init_fts5()
         self._load_vectors()
         
         # Mark as initialized
         self._initialized = True
-    
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        return False
+
     def _init_tables(self) -> None:
         """Initialize database tables."""
         # Note: embedding stored as BLOB (binary) for performance
@@ -124,7 +154,57 @@ class MemoryStore:
             CREATE INDEX IF NOT EXISTS idx_timestamp ON memories(timestamp)
         """)
         
+        # Initialize sqlite-vec table if available
+        if HAS_SQLITE_VEC:
+            self.conn.execute("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS memories_vec USING vec0(
+                    id TEXT PRIMARY KEY,
+                    embedding FLOAT[384]
+                )
+            """)
+            
+            # Backfill existing memories into memories_vec if needed
+            cursor = self.conn.execute("SELECT COUNT(*) FROM memories_vec")
+            vec_count = cursor.fetchone()[0]
+            
+            cursor = self.conn.execute("SELECT COUNT(*) FROM memories WHERE embedding IS NOT NULL")
+            mem_count = cursor.fetchone()[0]
+            
+            if vec_count < mem_count:
+                logger.info(f"Backfilling {mem_count - vec_count} memories into sqlite-vec")
+                self.conn.execute("""
+                    INSERT INTO memories_vec(id, embedding)
+                    SELECT id, embedding FROM memories 
+                    WHERE embedding IS NOT NULL 
+                    AND id NOT IN (SELECT id FROM memories_vec)
+                """)
+                self.conn.commit()
+        
         self.conn.commit()
+
+    def _init_fts5(self) -> None:
+        """Initialize FTS5 full-text search (one-time setup)."""
+        self._fts5_available = False
+        try:
+            cursor = self.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='memories_fts'"
+            )
+            if not cursor.fetchone():
+                self.conn.execute("""
+                    CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+                        text,
+                        content='memories',
+                        content_rowid='rowid'
+                    )
+                """)
+                self.conn.execute("""
+                    INSERT INTO memories_fts(rowid, text)
+                    SELECT rowid, text FROM memories WHERE text IS NOT NULL
+                """)
+                self.conn.commit()
+            self._fts5_available = True
+        except Exception:
+            pass  # FTS5 not available on this SQLite build
     
     def _load_vectors(self) -> None:
         """Load all vectors into memory for fast search (binary format)."""
@@ -198,8 +278,11 @@ class MemoryStore:
             except Exception:
                 pass  # If check fails, proceed with store
         
-        # Generate ID from content + timestamp
-        doc_id = hashlib.md5(f"{text}:{time.time()}".encode()).hexdigest()[:16]
+        # Generate ID from content + timestamp + random salt
+        doc_id = hashlib.blake2b(
+            f"{text}:{time.time()}:{uuid.uuid4()}".encode(),
+            digest_size=8
+        ).hexdigest()
         
         # Embed the text
         embedding = embed(text)
@@ -213,27 +296,39 @@ class MemoryStore:
         # Store in SQLite as binary blob (fast) not JSON (slow)
         embedding_bytes = embedding_np.tobytes()
         
-        self.conn.execute(
-            """INSERT INTO memories 
-               (id, text, timestamp, source, session_id, importance, tags, collection, embedding)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (doc_id, text, int(time.time()), source, session_id, 
-             float(importance), ','.join(tags) if tags else '', collection,
-             embedding_bytes)
-        )
-        
-        self.conn.commit()
-        
-        # Sync to FTS5 for BM25 search
-        try:
+        with self._write_lock:
             self.conn.execute(
-                "INSERT INTO memories_fts(rowid, text) VALUES (last_insert_rowid(), ?)",
-                (text,)
+                """INSERT INTO memories 
+                   (id, text, timestamp, source, session_id, importance, tags, collection, embedding)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (doc_id, text, int(time.time()), source, session_id, 
+                 float(importance), ','.join(tags) if tags else '', collection,
+                 embedding_bytes)
             )
+            
             self.conn.commit()
-        except Exception:
-            # FTS5 table might not exist, ignore
-            pass
+            
+            # Sync to FTS5 for BM25 search
+            try:
+                self.conn.execute(
+                    "INSERT INTO memories_fts(rowid, text) VALUES (last_insert_rowid(), ?)",
+                    (text,)
+                )
+            except Exception:
+                # FTS5 table might not exist, ignore
+                pass
+
+            # Sync to sqlite-vec
+            if HAS_SQLITE_VEC:
+                try:
+                    self.conn.execute(
+                        "INSERT INTO memories_vec(id, embedding) VALUES (?, ?)",
+                        (doc_id, embedding_bytes)
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to sync to sqlite-vec: {e}")
+            
+            self.conn.commit()
         
         # Update in-memory cache
         self._vectors[doc_id] = embedding_np
@@ -277,6 +372,7 @@ class MemoryStore:
         
         Raises:
             ValidationError: If query is invalid
+            QueryTimeoutError: If query exceeds timeout
         """
         if not query or not query.strip():
             return []
@@ -284,6 +380,30 @@ class MemoryStore:
         if len(query) > 1000:
              raise ValidationError(f"Query too long ({len(query)} > 1000 chars)")
         
+        # Convert timeout_ms to seconds for timeout context
+        timeout_sec = timeout_ms / 1000.0 if timeout_ms > 0 else None
+        
+        try:
+            with optional_timeout(timeout_sec):
+                return self._recall_internal(
+                    query, collection, topk, filters, 
+                    min_importance, since, before
+                )
+        except QueryTimeoutError:
+            logger.warning(f"Query timed out after {timeout_ms}ms: {query[:50]}...")
+            raise QueryTimeoutError(f"Query timed out after {timeout_ms}ms")
+    
+    def _recall_internal(
+        self,
+        query: str,
+        collection: Optional[str] = None,
+        topk: int = 5,
+        filters: Optional[Dict[str, Any]] = None,
+        min_importance: Optional[float] = None,
+        since: Optional[str] = None,
+        before: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Internal recall implementation (called with timeout wrapper)."""
         # Handle imports for both module and direct execution
         try:
             from memento.embed import embed
@@ -304,6 +424,19 @@ class MemoryStore:
         # Build WHERE clause from all filters
         where_clauses = []
         params = []
+        
+        # Valid filter keys whitelist
+        ALLOWED_FILTERS = {
+            'collection', 'min_importance', 'since', 'before', 
+            'after_timestamp', 'before_timestamp', 'source', 
+            'session_id', 'tags', 'text_like'
+        }
+
+        # Validate filters
+        if filters:
+            for key in filters:
+                if key not in ALLOWED_FILTERS:
+                    logger.warning(f"Ignoring invalid filter key: {key}")
         
         # Legacy collection filter (can also be in filters dict)
         if collection:
@@ -397,17 +530,34 @@ class MemoryStore:
         
         # Use optimized vector search backend
         try:
-            from memento.vector_search import build_index, search_index
+            # Prefer sqlite-vec if available
+            if HAS_SQLITE_VEC:
+                cursor = self.conn.execute(
+                    """
+                    SELECT id, distance
+                    FROM memories_vec
+                    WHERE embedding MATCH ?
+                    AND id IN (SELECT id FROM memories WHERE id IN ({placeholders}))
+                    ORDER BY distance
+                    LIMIT ?
+                    """.replace("{placeholders}", ",".join("?" * len(candidate_ids))),
+                    (query_vector.tobytes(), *candidate_ids, topk)
+                )
+                # sqlite-vec returns distance (lower is better), we want similarity
+                similarities = [(row[0], 1.0 - row[1]) for row in cursor.fetchall()]
+            else:
+                from memento.vector_search import build_index, search_index
+                
+                # Build index from candidate vectors (cached in memory for repeated queries)
+                if not hasattr(self, '_search_index') or self._index_needs_refresh:
+                    candidate_vectors = {doc_id: self._vectors[doc_id] for doc_id in candidate_ids if doc_id in self._vectors}
+                    self._search_index, self._search_ids = build_index(candidate_vectors, dim=384)
+                    self._index_needs_refresh = False
+                
+                # Search using optimized backend
+                search_results = search_index(self._search_index, query_vector, topk=topk)
+                similarities = [(self._search_ids[idx], score) for idx, score in search_results]
             
-            # Build index from candidate vectors (cached in memory for repeated queries)
-            if not hasattr(self, '_search_index') or self._index_needs_refresh:
-                candidate_vectors = {doc_id: self._vectors[doc_id] for doc_id in candidate_ids if doc_id in self._vectors}
-                self._search_index, self._search_ids = build_index(candidate_vectors, dim=384)
-                self._index_needs_refresh = False
-            
-            # Search using optimized backend
-            search_results = search_index(self._search_index, query_vector, topk=topk)
-            similarities = [(self._search_ids[idx], score) for idx, score in search_results]
             top_ids = [s[0] for s in similarities]
             
         except Exception as e:
@@ -441,17 +591,18 @@ class MemoryStore:
         for doc_id, score in similarities[:topk]:
             if doc_id in rows:
                 row = rows[doc_id]
-                results.append({
-                    'id': row[0],
-                    'text': row[1],
-                    'timestamp': row[2],
-                    'source': row[3],
-                    'session_id': row[4],
-                    'importance': row[5],
-                    'tags': row[6].split(',') if row[6] else [],
-                    'collection': row[7],
-                    'score': score
-                })
+                result = SearchResult(
+                    id=row[0],
+                    text=row[1],
+                    timestamp=row[2],
+                    source=row[3],
+                    session_id=row[4],
+                    importance=row[5],
+                    tags=row[6].split(',') if row[6] else [],
+                    collection=row[7],
+                    score=score
+                )
+                results.append(result)
         
         return results
     
@@ -634,8 +785,9 @@ class MemoryStore:
     def delete(self, doc_id: str, collection: str = "knowledge") -> bool:
         """Delete a memory by ID."""
         try:
-            self.conn.execute("DELETE FROM memories WHERE id = ?", (doc_id,))
-            self.conn.commit()
+            with self._write_lock:
+                self.conn.execute("DELETE FROM memories WHERE id = ?", (doc_id,))
+                self.conn.commit()
             
             # Update cache - remove from both dict and list
             if doc_id in self._vectors:
@@ -654,11 +806,13 @@ class MemoryStore:
         )
         counts = {row[0]: row[1] for row in cursor.fetchall()}
         
+        backend = "sqlite-vec" if HAS_SQLITE_VEC else "numpy"
+        
         return {
             'collections': counts,
             'total_vectors': len(self._ids),
             'db_path': self.db_path,
-            'backend': 'numpy'
+            'backend': backend
         }
     
     def _parse_time(self, time_str: str) -> int:

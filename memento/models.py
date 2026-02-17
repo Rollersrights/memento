@@ -9,7 +9,11 @@ from datetime import datetime
 
 @dataclass
 class Memory:
-    """Represents a single memory item."""
+    """Represents a single memory item.
+    
+    Supports dict-like access (result['text'], result.get('score'))
+    for backward compatibility with code expecting dicts.
+    """
     id: str
     text: str
     timestamp: int
@@ -19,6 +23,9 @@ class Memory:
     tags: List[str] = field(default_factory=list)
     collection: str = "knowledge"
     embedding: Optional[bytes] = None  # Raw bytes from SQLite
+
+    # Extra fields storage for dynamic attributes
+    _extra: Dict[str, Any] = field(default_factory=dict, repr=False)
 
     @property
     def datetime(self) -> datetime:
@@ -33,8 +40,27 @@ class Memory:
             "session_id": self.session_id,
             "importance": self.importance,
             "tags": self.tags,
-            "collection": self.collection
+            "collection": self.collection,
+            **self._extra
         }
+
+    # Dict-like access for backward compatibility
+    def __getitem__(self, key: str) -> Any:
+        if key in self._extra:
+            return self._extra[key]
+        return self.to_dict()[key]
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        """Allow dict-like item assignment for dynamic fields."""
+        self._extra[key] = value
+
+    def __contains__(self, key: str) -> bool:
+        return key in self.to_dict()
+
+    def get(self, key: str, default: Any = None) -> Any:
+        if key in self._extra:
+            return self._extra[key]
+        return self.to_dict().get(key, default)
 
 @dataclass
 class SearchResult(Memory):
