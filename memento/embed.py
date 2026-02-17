@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Embedding wrapper for all-MiniLM-L6-v2 - ONNX Runtime only
+Embedding wrapper for all-MiniLM-L6-v2
 Lightweight, local, no API calls
+ONNX Runtime with PyTorch fallback for non-AVX2 machines
 """
 
 import os
@@ -23,6 +24,8 @@ _model_loading_started = False
 _model_loading_lock = threading.Lock()
 _onnx_session = None
 _onnx_tokenizer = None
+_pytorch_model = None
+_embedder_type = None  # 'onnx' or 'pytorch'
 
 # Cache stats
 _cache_hits = 0
@@ -36,15 +39,33 @@ _last_activity_time = None
 _idle_lock = threading.Lock()
 
 
+def _has_avx2() -> bool:
+    """Detect AVX2 support at runtime."""
+    try:
+        if os.path.exists('/proc/cpuinfo'):
+            with open('/proc/cpuinfo', 'r') as f:
+                return 'avx2' in f.read().lower()
+    except Exception:
+        pass
+    return False
+
+
 def _load_model_background():
     """Load model in background thread."""
-    global _onnx_session
+    global _onnx_session, _embedder_type
     try:
         _load_onnx_model()
+        _embedder_type = 'onnx'
         _model_ready_event.set()
     except Exception as e:
-        print(f"[Embed] Background loading failed: {e}", file=sys.stderr)
-        _model_ready_event.set()
+        print(f"[Embed] ONNX failed ({e}), will try PyTorch fallback", file=sys.stderr)
+        try:
+            _load_pytorch_model()
+            _embedder_type = 'pytorch'
+            _model_ready_event.set()
+        except Exception as e2:
+            print(f"[Embed] PyTorch fallback also failed: {e2}", file=sys.stderr)
+            _model_ready_event.set()
 
 
 def _start_background_loading():
@@ -97,14 +118,26 @@ def set_idle_timeout(minutes: float) -> None:
 
 def unload_model(force: bool = False) -> bool:
     """Free model from RAM."""
-    global _onnx_session, _model_loading_started, _model_ready_event, _model_loading_thread
-    if _onnx_session is None:
+    global _onnx_session, _pytorch_model, _embedder_type
+    global _model_loading_started, _model_ready_event, _model_loading_thread
+    
+    unloaded = False
+    if _onnx_session is not None:
+        _onnx_session = None
+        unloaded = True
+    if _pytorch_model is not None:
+        _pytorch_model = None
+        unloaded = True
+    
+    if not unloaded:
         return False
+        
     with _idle_lock:
         if _idle_timer is not None:
             _idle_timer.cancel()
             _idle_timer = None
-    _onnx_session = None
+    
+    _embedder_type = None
     _model_loading_started = False
     _model_ready_event.clear()
     _model_loading_thread = None
@@ -115,10 +148,16 @@ def unload_model(force: bool = False) -> bool:
 
 def get_memory_usage() -> dict:
     """Get current memory usage statistics."""
-    result = {'model_loaded': False, 'estimated_mb': 0, 'idle_timeout_min': None, 'seconds_idle': None}
-    if _onnx_session is not None:
+    result = {
+        'model_loaded': False, 
+        'embedder_type': _embedder_type,
+        'estimated_mb': 0, 
+        'idle_timeout_min': None, 
+        'seconds_idle': None
+    }
+    if _onnx_session is not None or _pytorch_model is not None:
         result['model_loaded'] = True
-        result['estimated_mb'] = 85
+        result['estimated_mb'] = 85 if _embedder_type == 'onnx' else 80
     if _idle_timeout_seconds is not None:
         result['idle_timeout_min'] = _idle_timeout_seconds / 60
         if _last_activity_time is not None:
@@ -218,6 +257,24 @@ def _load_onnx_model():
     return _onnx_session
 
 
+def _load_pytorch_model():
+    """Load PyTorch model as fallback."""
+    global _pytorch_model
+    if _pytorch_model is not None:
+        return _pytorch_model
+    
+    from sentence_transformers import SentenceTransformer
+    cache_dir = os.path.expanduser("~/.openclaw/memento/models")
+    os.makedirs(cache_dir, exist_ok=True)
+    
+    print("[Embed] Loading PyTorch model (fallback)...", file=sys.stderr)
+    _pytorch_model = SentenceTransformer(
+        "sentence-transformers/all-MiniLM-L6-v2",
+        cache_folder=cache_dir
+    )
+    return _pytorch_model
+
+
 def _get_onnx_tokenizer():
     """Get or load tokenizer."""
     global _onnx_tokenizer
@@ -266,6 +323,18 @@ def _embed_onnx(texts: List[str]) -> List[List[float]]:
     return embeddings.tolist()
 
 
+def _embed_pytorch(texts: List[str]) -> List[List[float]]:
+    """Embed using PyTorch/SentenceTransformers (fallback)."""
+    global _pytorch_model
+    _reset_idle_timer()
+    
+    if _pytorch_model is None:
+        _load_pytorch_model()
+    
+    results = _pytorch_model.encode(texts, convert_to_numpy=True)
+    return [r.tolist() for r in results]
+
+
 def _get_cache_key(text: str) -> str:
     """Generate cache key for text."""
     return hashlib.blake2b(text.encode('utf-8'), digest_size=16).hexdigest()
@@ -282,15 +351,29 @@ def _embed_single_cached(text_hash: str, text: str) -> Tuple[float, ...]:
         return disk_result
     
     _cache_misses += 1
-    result = _embed_onnx([text])[0]
+    
+    # Try ONNX first, fall back to PyTorch
+    try:
+        if _embedder_type == 'pytorch' or _onnx_session is None:
+            result = _embed_pytorch([text])[0]
+        else:
+            result = _embed_onnx([text])[0]
+    except Exception:
+        # Last resort: try PyTorch
+        result = _embed_pytorch([text])[0]
+    
     vector_tuple = tuple(result)
     _disk_cache.set(text_hash, vector_tuple)
     return vector_tuple
 
 
 def embed(text: Union[str, List[str]], batch_size: int = 32, use_cache: bool = True) -> Union[List[float], List[List[float]]]:
-    """Embed text(s) into 384-dimensional vectors using ONNX Runtime."""
-    global _cache_hits
+    """Embed text(s) into 384-dimensional vectors."""
+    global _cache_hits, _embedder_type
+    
+    # Ensure model is loaded and determine embedder type
+    if not _model_ready_event.is_set():
+        wait_for_model(timeout=60.0)
     
     if isinstance(text, str):
         if use_cache:
@@ -301,7 +384,13 @@ def embed(text: Union[str, List[str]], batch_size: int = 32, use_cache: bool = T
                 _cache_hits += 1
             return list(result_tuple)
         else:
-            return _embed_onnx([text])[0]
+            # Bypass cache
+            try:
+                if _embedder_type == 'pytorch':
+                    return _embed_pytorch([text])[0]
+                return _embed_onnx([text])[0]
+            except Exception:
+                return _embed_pytorch([text])[0]
     else:
         if use_cache and len(text) <= 10:
             results = []
@@ -311,7 +400,13 @@ def embed(text: Union[str, List[str]], batch_size: int = 32, use_cache: bool = T
                 results.append(list(result_tuple))
             return results
         else:
-            return _embed_onnx(text)
+            # Large batch - process all at once
+            try:
+                if _embedder_type == 'pytorch':
+                    return _embed_pytorch(text)
+                return _embed_onnx(text)
+            except Exception:
+                return _embed_pytorch(text)
 
 
 def embed_chunks(chunks: List[str], batch_size: int = 32) -> List[List[float]]:
@@ -337,6 +432,11 @@ def warmup() -> bool:
     return wait_for_model(timeout=60.0)
 
 
+def get_embedder_type() -> str:
+    """Return the current embedder type ('onnx' or 'pytorch')."""
+    return _embedder_type or 'unknown'
+
+
 def get_cache_stats() -> dict:
     """Get cache statistics."""
     cache_info = _embed_single_cached.cache_info()
@@ -350,6 +450,7 @@ def get_cache_stats() -> dict:
         'currsize': cache_info.currsize,
         'hit_rate': cache_info.hits / (cache_info.hits + cache_info.misses) * 100 
                     if (cache_info.hits + cache_info.misses) > 0 else 0,
+        'embedder': _embedder_type,
         'model_ready': is_model_ready(),
         'memory': get_memory_usage()
     }
@@ -365,18 +466,21 @@ def clear_cache() -> None:
 
 
 if __name__ == "__main__":
-    print("Testing ONNX embedding...")
+    print("Testing embedding with auto-detect...")
+    print(f"AVX2 detected: {_has_avx2()}")
+    
     test_text = "This is a test sentence for embedding."
     
-    import time
-    start = time.perf_counter()
+    import time as time_mod
+    start = time_mod.perf_counter()
     vector1 = embed(test_text)
-    t1 = (time.perf_counter() - start) * 1000
+    t1 = (time_mod.perf_counter() - start) * 1000
     print(f"\nFirst embed: {t1:.2f}ms")
+    print(f"Embedder type: {_embedder_type}")
     
-    start = time.perf_counter()
+    start = time_mod.perf_counter()
     vector2 = embed(test_text)
-    t2 = (time.perf_counter() - start) * 1000
+    t2 = (time_mod.perf_counter() - start) * 1000
     print(f"Second embed: {t2:.2f}ms (cached)")
     print(f"Speedup: {t1/t2:.1f}x" if t2 > 0 else "N/A")
     print(f"Vectors match: {vector1 == vector2}")
