@@ -7,6 +7,9 @@ With LRU caching for repeated queries
 
 import os
 import hashlib
+import sqlite3
+import json
+import time
 from functools import lru_cache
 from typing import List, Union, Tuple
 
@@ -17,6 +20,57 @@ _tokenizer = None
 # Cache stats
 _cache_hits = 0
 _cache_misses = 0
+_disk_hits = 0
+
+class PersistentCache:
+    """SQLite-backed persistent cache for embeddings."""
+    def __init__(self):
+        self.db_path = os.path.expanduser("~/.memento/cache.db")
+        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        self._init_db()
+        
+    def _init_db(self):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS embeddings (
+                    hash TEXT PRIMARY KEY,
+                    vector TEXT,
+                    last_accessed REAL
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_access ON embeddings(last_accessed)")
+            
+    def get(self, text_hash: str) -> Union[Tuple[float, ...], None]:
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.execute(
+                    "SELECT vector FROM embeddings WHERE hash = ?", 
+                    (text_hash,)
+                )
+                row = cursor.fetchone()
+                if row:
+                    # Update access time async/fire-and-forget ideally, but synchronous is safer for SQLite
+                    conn.execute(
+                        "UPDATE embeddings SET last_accessed = ? WHERE hash = ?",
+                        (time.time(), text_hash)
+                    )
+                    return tuple(json.loads(row[0]))
+        except Exception as e:
+            print(f"Cache read error: {e}")
+        return None
+
+    def set(self, text_hash: str, vector: Tuple[float, ...]):
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO embeddings (hash, vector, last_accessed) VALUES (?, ?, ?)",
+                    (text_hash, json.dumps(vector), time.time())
+                )
+        except Exception as e:
+            print(f"Cache write error: {e}")
+
+# Global disk cache instance
+_disk_cache = PersistentCache()
 
 def get_model():
     """Lazy-load the embedding model (cached)."""
@@ -36,20 +90,31 @@ def _get_cache_key(text: str) -> str:
     """Generate cache key for text (hash-based)."""
     return hashlib.md5(text.encode('utf-8')).hexdigest()
 
-# LRU cache for single text embeddings (max 1000 entries)
+# LRU cache for single text embeddings (max 1000 entries) - RAM Layer
 @lru_cache(maxsize=1000)
 def _embed_single_cached(text_hash: str, text: str) -> Tuple[float, ...]:
     """
     Internal cached embedding function.
-    Uses hash+text as key to handle collisions safely.
-    Returns tuple (hashable for cache).
+    RAM -> Disk -> Compute
     """
-    global _cache_misses
-    _cache_misses += 1
+    global _cache_misses, _disk_hits
     
+    # Check disk cache first (missed RAM if we are here)
+    disk_result = _disk_cache.get(text_hash)
+    if disk_result:
+        _disk_hits += 1
+        return disk_result
+    
+    # Real miss - compute
+    _cache_misses += 1
     model = get_model()
     result = model.encode(text, convert_to_numpy=True)
-    return tuple(result.tolist())
+    vector_tuple = tuple(result.tolist())
+    
+    # Save to disk for next time
+    _disk_cache.set(text_hash, vector_tuple)
+    
+    return vector_tuple
 
 def embed(text: Union[str, List[str]], batch_size: int = 32, use_cache: bool = True) -> Union[List[float], List[List[float]]]:
     """
@@ -69,14 +134,13 @@ def embed(text: Union[str, List[str]], batch_size: int = 32, use_cache: bool = T
     if isinstance(text, str):
         if use_cache:
             cache_key = _get_cache_key(text)
-            # Check if in cache (lru_cache handles this, but we track hits)
-            cached = _embed_single_cached.cache_info()
             
+            # Check RAM cache
+            cached_info = _embed_single_cached.cache_info()
             result_tuple = _embed_single_cached(cache_key, text)
-            new_cached = _embed_single_cached.cache_info()
             
-            # Track hits (approximate)
-            if new_cached.hits > cached.hits:
+            # If hits count increased, it was in RAM
+            if _embed_single_cached.cache_info().hits > cached_info.hits:
                 _cache_hits += 1
             
             return list(result_tuple)
