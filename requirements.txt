@@ -1,0 +1,9 @@
+# Core dependencies
+sentence-transformers>=2.0.0
+numpy>=1.20.0
+
+# Optional - for dashboard
+rich>=13.0.0
+
+# Optional - for development
+pytest>=7.0.0
