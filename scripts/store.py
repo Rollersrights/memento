@@ -14,6 +14,15 @@ from pathlib import Path
 
 import numpy as np
 
+# Handle imports for both module and direct execution
+try:
+    from scripts.utils.logger import logger
+except ImportError:
+    # Fallback if running directly without package structure
+    import logging
+    logger = logging.getLogger("memento")
+    logging.basicConfig(level=logging.INFO)
+
 # Default storage path (override with MEMORY_DB_PATH env var)
 DEFAULT_DB_PATH = os.environ.get('MEMORY_DB_PATH', os.path.expanduser("~/.memento/memory.db"))
 
@@ -72,7 +81,7 @@ class MemoryStore:
         # Mark as initialized
         self._initialized = True
     
-    def _init_tables(self):
+    def _init_tables(self) -> None:
         """Initialize database tables."""
         # Note: embedding stored as BLOB (binary) for performance
         self.conn.execute("""
@@ -99,7 +108,7 @@ class MemoryStore:
         
         self.conn.commit()
     
-    def _load_vectors(self):
+    def _load_vectors(self) -> None:
         """Load all vectors into memory for fast search (binary format)."""
         cursor = self.conn.execute(
             "SELECT id, embedding FROM memories WHERE embedding IS NOT NULL"
@@ -115,7 +124,7 @@ class MemoryStore:
             except Exception:
                 pass
         
-        print(f"Loaded {len(self._ids)} vectors into memory")
+        logger.info(f"Loaded {len(self._ids)} vectors into memory")
     
     def remember(
         self,
@@ -595,7 +604,7 @@ class MemoryStore:
             
             return True
         except Exception as e:
-            print(f"[Memory] Delete error: {e}")
+            logger.error(f"Delete error: {e}")
             return False
     
     def stats(self) -> Dict[str, Any]:
@@ -626,7 +635,7 @@ class MemoryStore:
         
         return value * multipliers.get(unit, 86400)
     
-    def close(self):
+    def close(self) -> None:
         """Close database connection."""
         self.conn.close()
     
@@ -652,7 +661,7 @@ class MemoryStore:
         
         # Copy database file
         shutil.copy2(self.db_path, backup_path)
-        print(f"[Memory] Backup created: {backup_path}")
+        logger.info(f"Backup created: {backup_path}")
         return backup_path
     
     def export_json(self, export_path: Optional[str] = None) -> str:
@@ -702,10 +711,10 @@ class MemoryStore:
         with open(export_path, 'w') as f:
             json.dump(export_data, f, indent=2)
         
-        print(f"[Memory] Exported {len(memories)} memories to: {export_path}")
+        logger.info(f"Exported {len(memories)} memories to: {export_path}")
         return export_path
     
-    def __del__(self):
+    def __del__(self) -> None:
         """Destructor to ensure connection closes."""
         if hasattr(self, 'conn'):
             self.conn.close()

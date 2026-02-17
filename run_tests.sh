@@ -19,8 +19,12 @@ echo -e "\n🔹 Running Cache Persistence Tests..."
 python3 tests/test_cache.py -v
 CACHE_EXIT=$?
 
+echo -e "\n🔹 Running Search & Filter Tests..."
+python3 tests/test_search.py -v
+SEARCH_EXIT=$?
+
 echo "==========================================="
-if [ $CORE_EXIT -eq 0 ] && [ $CACHE_EXIT -eq 0 ]; then
+if [ $CORE_EXIT -eq 0 ] && [ $CACHE_EXIT -eq 0 ] && [ $SEARCH_EXIT -eq 0 ]; then
     echo "✅ ALL TESTS PASSED"
     exit 0
 else

@@ -52,7 +52,7 @@ class SessionLogWatcher:
             with open(self.state_file) as f:
                 data = json.load(f)
                 return set(data.get('processed_hashes', []))
-        except:
+        except (OSError, json.JSONDecodeError):
             return set()
     
     def save_processed_hashes(self, hashes: set):
@@ -78,7 +78,7 @@ class SessionLogWatcher:
                             try:
                                 entry = json.loads(line)
                                 entries.append(entry)
-                            except:
+                            except json.JSONDecodeError:
                                 continue
             else:
                 # Handle regular JSON format

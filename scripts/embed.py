@@ -27,12 +27,12 @@ _disk_hits = 0
 
 class PersistentCache:
     """SQLite-backed persistent cache for embeddings."""
-    def __init__(self):
+    def __init__(self) -> None:
         self.db_path = os.path.expanduser("~/.memento/cache.db")
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         self._init_db()
         
-    def _init_db(self):
+    def _init_db(self) -> None:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS embeddings (
@@ -62,7 +62,7 @@ class PersistentCache:
             print(f"Cache read error: {e}")
         return None
 
-    def set(self, text_hash: str, vector: Tuple[float, ...]):
+    def set(self, text_hash: str, vector: Tuple[float, ...]) -> None:
         try:
             with sqlite3.connect(self.db_path) as conn:
                 conn.execute(
@@ -94,12 +94,14 @@ def _has_avx2() -> bool:
                 return 'avx2' in [f.lower() for f in flags]
             elif isinstance(flags, str):
                 return 'avx2' in flags.lower()
-        except:
+        except ImportError:
+            pass
+        except Exception:
             pass
         
         # Method 3: Try to execute AVX2 instruction (dangerous, skip for safety)
         return False
-    except:
+    except Exception:
         return False
 
 def _try_onnx() -> bool:
@@ -396,7 +398,7 @@ def get_cache_stats() -> dict:
         'embedder': embedder
     }
 
-def clear_cache():
+def clear_cache() -> None:
     """Clear the embedding cache."""
     _embed_single_cached.cache_clear()
     global _cache_hits, _cache_misses, _disk_hits
