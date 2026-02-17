@@ -694,6 +694,133 @@ def warmup() -> bool:
         print("[Embed] Model loading timed out", file=sys.stderr)
         return False
 
+
+# ============================================================================
+# CACHE WARMING - Issue #20
+# ============================================================================
+
+# Common query patterns for memory systems
+_COMMON_QUERIES = [
+    # Personal context queries
+    "What was I working on?",
+    "What did I do yesterday?",
+    "What are my tasks?",
+    "What did we discuss?",
+    "Summarize my recent work",
+    "What did I learn today?",
+    "What are my priorities?",
+    
+    # Team/Project queries
+    "What did Bob say?",
+    "What is the status of the project?",
+    "What are the open issues?",
+    "What decisions were made?",
+    "What is the next step?",
+    
+    # Technical queries
+    "What is the architecture?",
+    "How does this work?",
+    "What is the error?",
+    "How do I fix this?",
+    "What is the plan?",
+    
+    # Time-based queries
+    "What happened this morning?",
+    "What did we decide last week?",
+    "What changed recently?",
+    "What is new?",
+]
+
+
+def warmup_cache(queries: List[str] = None, include_common: bool = True) -> dict:
+    """
+    Pre-compute embeddings to warm the cache.
+    
+    Call this after model warmup to ensure fast responses for common queries.
+    Useful in cron jobs or startup scripts.
+    
+    Args:
+        queries: Custom list of queries to warm (optional)
+        include_common: Whether to include common query patterns (default True)
+    
+    Returns:
+        Dict with warmup statistics:
+        {
+            'warmed': int,           # Number of queries warmed
+            'time_ms': float,        # Total time in milliseconds
+            'time_per_query_ms': float,  # Average time per query
+            'cache_hits_before': int,
+            'cache_hits_after': int,
+            'queries': List[str]     # List of queries that were warmed
+        }
+    
+    Example:
+        >>> warmup()  # Model warmup first
+        True
+        >>> stats = warmup_cache()  # Warm common queries
+        >>> print(f"Warmed {stats['warmed']} queries in {stats['time_ms']:.0f}ms")
+        Warmed 22 queries in 125ms
+    """
+    # First ensure model is ready
+    if not is_model_ready():
+        if not wait_for_model(timeout=60.0):
+            raise RuntimeError("Model not ready for cache warming")
+    
+    # Build list of queries to warm
+    queries_to_warm = []
+    
+    if include_common:
+        queries_to_warm.extend(_COMMON_QUERIES)
+    
+    if queries:
+        queries_to_warm.extend(queries)
+    
+    # Deduplicate while preserving order
+    seen = set()
+    unique_queries = []
+    for q in queries_to_warm:
+        if q not in seen:
+            seen.add(q)
+            unique_queries.append(q)
+    
+    if not unique_queries:
+        return {
+            'warmed': 0,
+            'time_ms': 0.0,
+            'time_per_query_ms': 0.0,
+            'cache_hits_before': _cache_hits,
+            'cache_hits_after': _cache_hits,
+            'queries': []
+        }
+    
+    # Record cache stats before
+    stats_before = get_cache_stats()
+    
+    # Warm the cache
+    start_time = time.perf_counter()
+    
+    # Use batch embedding for efficiency
+    embed(unique_queries, use_cache=True)
+    
+    elapsed_ms = (time.perf_counter() - start_time) * 1000
+    
+    # Record cache stats after
+    stats_after = get_cache_stats()
+    
+    return {
+        'warmed': len(unique_queries),
+        'time_ms': elapsed_ms,
+        'time_per_query_ms': elapsed_ms / len(unique_queries) if unique_queries else 0.0,
+        'cache_hits_before': stats_before['hits'],
+        'cache_hits_after': stats_after['hits'],
+        'queries': unique_queries
+    }
+
+
+def get_warmup_queries() -> List[str]:
+    """Get the list of default warmup queries."""
+    return _COMMON_QUERIES.copy()
+
 def get_cache_stats() -> dict:
     """Get cache statistics including memory usage."""
     cache_info = _embed_single_cached.cache_info()

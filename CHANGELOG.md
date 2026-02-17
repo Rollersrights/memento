@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **Cache Warming Strategy** - Issue #20
+  - `warmup_cache()` function to pre-compute embeddings for common queries
+  - CLI script `scripts/warmup.py` for cron jobs and automation
+  - 21 common memory query patterns included (personal, team, technical)
+  - Batch warming for efficiency (~7.5ms per query)
+  - JSON output for monitoring and logging
 - **Model Memory Management** - Issue #19
   - `unload_model()` function to free ~80MB RAM
   - `set_idle_timeout(minutes)` for automatic unload after inactivity
