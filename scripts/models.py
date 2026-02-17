@@ -24,6 +24,9 @@ class Memory:
     collection: str = "knowledge"
     embedding: Optional[bytes] = None  # Raw bytes from SQLite
 
+    # Extra fields storage for dynamic attributes
+    _extra: Dict[str, Any] = field(default_factory=dict, repr=False)
+
     @property
     def datetime(self) -> datetime:
         return datetime.fromtimestamp(self.timestamp)
@@ -37,17 +40,26 @@ class Memory:
             "session_id": self.session_id,
             "importance": self.importance,
             "tags": self.tags,
-            "collection": self.collection
+            "collection": self.collection,
+            **self._extra
         }
 
     # Dict-like access for backward compatibility
     def __getitem__(self, key: str) -> Any:
+        if key in self._extra:
+            return self._extra[key]
         return self.to_dict()[key]
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        """Allow dict-like item assignment for dynamic fields."""
+        self._extra[key] = value
 
     def __contains__(self, key: str) -> bool:
         return key in self.to_dict()
 
     def get(self, key: str, default: Any = None) -> Any:
+        if key in self._extra:
+            return self._extra[key]
         return self.to_dict().get(key, default)
 
 @dataclass
