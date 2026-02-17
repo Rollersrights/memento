@@ -80,13 +80,30 @@ def analyze_bottlenecks():
     
     # 4. Check for timeout configuration
     print("🔍 Checking timeouts...")
-    bottlenecks.append({
-        'priority': 'HIGH',
-        'issue': 'No query timeout configured',
-        'metric': 'None',
-        'target': '5-10s max',
-        'solution': 'Add timeout parameter to all search operations'
-    })
+    try:
+        from scripts.store import MemoryStore
+        import inspect
+        store = MemoryStore()
+        recall_sig = inspect.signature(store.recall)
+        if 'timeout_ms' in recall_sig.parameters:
+            print("   ✅ Query timeout configured (timeout_ms parameter)")
+        else:
+            bottlenecks.append({
+                'priority': 'HIGH',
+                'issue': 'No query timeout configured',
+                'metric': 'None',
+                'target': '5-10s max',
+                'solution': 'Add timeout parameter to search operations'
+            })
+    except Exception:
+        # If we can't check, assume it's not configured
+        bottlenecks.append({
+            'priority': 'HIGH',
+            'issue': 'No query timeout configured',
+            'metric': 'None',
+            'target': '5-10s max',
+            'solution': 'Add timeout parameter to search operations'
+        })
     
     # Sort by priority
     priority_order = {'CRITICAL': 0, 'HIGH': 1, 'MEDIUM': 2, 'LOW': 3}
