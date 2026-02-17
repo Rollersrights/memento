@@ -61,6 +61,11 @@ class MemoryStore:
         self._vectors = {}  # id -> numpy array
         self._ids = []      # ordered list of ids
         
+        # Search index cache
+        self._search_index = None
+        self._search_ids = None
+        self._index_needs_refresh = True
+        
         self._init_tables()
         self._load_vectors()
         
@@ -193,6 +198,9 @@ class MemoryStore:
         # Update in-memory cache
         self._vectors[doc_id] = embedding_np
         self._ids.append(doc_id)
+        
+        # Mark search index as needing refresh
+        self._index_needs_refresh = True
         
         return doc_id
     
@@ -338,18 +346,32 @@ class MemoryStore:
         if not candidate_ids:
             return []
         
-        # Compute cosine similarities
-        similarities = []
-        for doc_id in candidate_ids:
-            if doc_id in self._vectors:
-                vec = self._vectors[doc_id]
-                # Cosine similarity = dot product (since both are normalized)
-                sim = np.dot(query_vector, vec)
-                similarities.append((doc_id, float(sim)))
-        
-        # Sort by similarity
-        similarities.sort(key=lambda x: x[1], reverse=True)
-        top_ids = [s[0] for s in similarities[:topk]]
+        # Use optimized vector search backend
+        try:
+            from scripts.vector_search import build_index, search_index
+            
+            # Build index from candidate vectors (cached in memory for repeated queries)
+            if not hasattr(self, '_search_index') or self._index_needs_refresh:
+                candidate_vectors = {doc_id: self._vectors[doc_id] for doc_id in candidate_ids if doc_id in self._vectors}
+                self._search_index, self._search_ids = build_index(candidate_vectors, dim=384)
+                self._index_needs_refresh = False
+            
+            # Search using optimized backend
+            search_results = search_index(self._search_index, query_vector, topk=topk)
+            similarities = [(self._search_ids[idx], score) for idx, score in search_results]
+            top_ids = [s[0] for s in similarities]
+            
+        except Exception as e:
+            # Fallback to simple dot product
+            similarities = []
+            for doc_id in candidate_ids:
+                if doc_id in self._vectors:
+                    vec = self._vectors[doc_id]
+                    sim = np.dot(query_vector, vec)
+                    similarities.append((doc_id, float(sim)))
+            
+            similarities.sort(key=lambda x: x[1], reverse=True)
+            top_ids = [s[0] for s in similarities[:topk]]
         
         if not top_ids:
             return []
@@ -383,6 +405,151 @@ class MemoryStore:
                 })
         
         return results
+    
+    def batch_recall(
+        self,
+        queries: List[str],
+        collection: Optional[str] = None,
+        topk: int = 5,
+        filters: Optional[Dict[str, Any]] = None
+    ) -> List[List[Dict[str, Any]]]:
+        """
+        Batch search for multiple queries.
+        Optimized to embed all queries at once and search efficiently.
+        
+        Args:
+            queries: List of query strings
+            collection: Optional collection filter
+            topk: Results per query
+            filters: Optional metadata filters
+        
+        Returns:
+            List of result lists (one per query)
+        """
+        from scripts.embed import embed
+        
+        if len(self._ids) == 0:
+            return [[] for _ in queries]
+        
+        # Batch embed all queries at once (much faster!)
+        query_vectors = embed(queries, use_cache=True)
+        query_vectors_np = [np.array(qv, dtype=np.float32) for qv in query_vectors]
+        
+        # Normalize all queries
+        for qv in query_vectors_np:
+            norm = np.linalg.norm(qv)
+            if norm > 0:
+                qv /= norm
+        
+        # Build WHERE clause (same for all queries)
+        where_clauses = []
+        params = []
+        
+        if collection:
+            where_clauses.append("collection = ?")
+            params.append(collection)
+        
+        if filters:
+            if 'min_importance' in filters:
+                where_clauses.append("importance >= ?")
+                params.append(filters['min_importance'])
+            if 'source' in filters:
+                where_clauses.append("source = ?")
+                params.append(filters['source'])
+            if 'tags' in filters:
+                tags = filters['tags']
+                if isinstance(tags, str):
+                    tags = [tags]
+                tag_conditions = []
+                for tag in tags:
+                    tag_conditions.append("tags LIKE ?")
+                    params.append(f"%{tag}%")
+                if tag_conditions:
+                    where_clauses.append(f"({' OR '.join(tag_conditions)})")
+        
+        # Get candidate IDs (same for all queries in batch)
+        if where_clauses:
+            where_sql = " AND ".join(where_clauses)
+            cursor = self.conn.execute(
+                f"SELECT id FROM memories WHERE {where_sql}",
+                params
+            )
+            candidate_ids = [row[0] for row in cursor.fetchall()]
+        else:
+            candidate_ids = self._ids
+        
+        if not candidate_ids:
+            return [[] for _ in queries]
+        
+        # Batch search using optimized backend
+        try:
+            from scripts.vector_search import build_index, batch_search
+            
+            # Build index once
+            if not hasattr(self, '_search_index') or self._index_needs_refresh:
+                candidate_vectors = {doc_id: self._vectors[doc_id] for doc_id in candidate_ids if doc_id in self._vectors}
+                self._search_index, self._search_ids = build_index(candidate_vectors, dim=384)
+                self._index_needs_refresh = False
+            
+            # Batch search all queries at once
+            batch_results = batch_search(self._search_index, query_vectors_np, topk=topk)
+            
+        except Exception as e:
+            # Fallback: search each query individually
+            batch_results = []
+            for query_vector in query_vectors_np:
+                similarities = []
+                for doc_id in candidate_ids:
+                    if doc_id in self._vectors:
+                        vec = self._vectors[doc_id]
+                        sim = np.dot(query_vector, vec)
+                        similarities.append((doc_id, float(sim)))
+                similarities.sort(key=lambda x: x[1], reverse=True)
+                batch_results.append([(self._ids.index(s[0]) if s[0] in self._ids else 0, s[1]) for s in similarities[:topk]])
+        
+        # Fetch all unique IDs needed
+        all_top_ids = set()
+        for results in batch_results:
+            for idx, _ in results:
+                if idx < len(self._search_ids):
+                    all_top_ids.add(self._search_ids[idx])
+        
+        if not all_top_ids:
+            return [[] for _ in queries]
+        
+        # Batch fetch all records
+        placeholders = ','.join('?' * len(all_top_ids))
+        cursor = self.conn.execute(
+            f"""SELECT id, text, timestamp, source, session_id, 
+                      importance, tags, collection
+               FROM memories WHERE id IN ({placeholders})""",
+            list(all_top_ids)
+        )
+        rows = {row[0]: row for row in cursor.fetchall()}
+        
+        # Build results for each query
+        all_results = []
+        for query_idx, results in enumerate(batch_results):
+            query_results = []
+            for idx, score in results:
+                if idx < len(self._search_ids):
+                    doc_id = self._search_ids[idx]
+                    if doc_id in rows:
+                        row = rows[doc_id]
+                        query_results.append({
+                            'id': row[0],
+                            'text': row[1],
+                            'timestamp': row[2],
+                            'source': row[3],
+                            'session_id': row[4],
+                            'importance': row[5],
+                            'tags': row[6].split(',') if row[6] else [],
+                            'collection': row[7],
+                            'score': score
+                        })
+            all_results.append(query_results)
+        
+        return all_results
     
     def get_recent(
         self,

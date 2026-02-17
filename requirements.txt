@@ -1,6 +1,14 @@
 # Core dependencies
 sentence-transformers>=2.0.0
 numpy>=1.20.0
+py-cpuinfo>=9.0.0
+
+# Optional - for faster search on large datasets (10,000+ vectors)
+# hnswlib>=0.8.0  # Fastest, requires C++ compiler
+# faiss-cpu>=1.7.0  # Alternative, easier install
+
+# Optional - for faster inference on AVX2 CPUs
+# onnxruntime>=1.15.0
 
 # Optional - for dashboard
 rich>=13.0.0
