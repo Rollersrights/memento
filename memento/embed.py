@@ -560,11 +560,15 @@ def _embed_onnx(texts: List[str]) -> List[List[float]]:
         return_tensors='np'
     )
     
-    # Run inference
+    # Run inference - include token_type_ids if model expects it
     ort_inputs = {
-        'input_ids': inputs['input_ids'],
-        'attention_mask': inputs['attention_mask']
+        'input_ids': inputs['input_ids'].astype(np.int64),
+        'attention_mask': inputs['attention_mask'].astype(np.int64)
     }
+    
+    # Some ONNX models expect token_type_ids, some don't
+    if 'token_type_ids' in inputs:
+        ort_inputs['token_type_ids'] = inputs['token_type_ids'].astype(np.int64)
     
     outputs = session.run(None, ort_inputs)[0]
     
