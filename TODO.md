@@ -42,12 +42,12 @@ Use this file to track all work. Check off items when done, add your name when s
 
 | Ticket | Description | Status | Assignee | Notes |
 |--------|-------------|--------|----------|-------|
-| #12 | Add type hints to `store.py` | [@Bob] | @Bob | MemoryStore class |
-| #13 | Add type hints to `embed.py` | [ ] | | embed() function |
+| #12 | Add type hints to `store.py` | [x] | @Bob | MemoryStore class |
+| #13 | Add type hints to `embed.py` | [@Bob] | @Bob | embed() function |
 | #14 | Add type hints to `cli.py` | [ ] | | All CLI functions |
 | #15 | Add type hints to `search.py` | [ ] | | Search functions |
 | #16 | Create `scripts/types.py` | [ ] | | Shared type definitions |
-| #17 | Fix bare `except:` clauses | [ ] | | 8 occurrences in codebase |
+| #17 | Fix bare `except:` clauses | [x] | @Bob | 8 occurrences in codebase |
 | #18 | Create `MementoError` class | [ ] | | Custom exceptions |
 
 ### Testing
@@ -65,10 +65,10 @@ Use this file to track all work. Check off items when done, add your name when s
 
 | Ticket | Description | Status | Assignee | Notes |
 |--------|-------------|--------|----------|-------|
-| #25 | Config system (YAML) | [ ] | @Bob | ~/.memento/config.yaml |
-| #26 | DB migrations | [ ] | @Bob | schema_version table |
+| #25 | Config system (YAML) | [x] | @Bob | ~/.memento/config.yaml |
+| #26 | DB migrations | [@Bob] | @Bob | schema_version table |
 | #27 | Input validation | [ ] | @Bob | Length limits, sanitization |
-| #28 | Migrate prints to logging | [@Bob] | @Bob | Use logging_config.py |
+| #28 | Migrate prints to logging | [x] | @Bob | Use logging_config.py |
 | #29 | Query timeout option | [ ] | | Prevent hangs |
 | #30 | Pagination for results | [ ] | | Limit result sets |
 
