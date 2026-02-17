@@ -18,11 +18,28 @@ class QueryTimeoutError(TimeoutError):
 # Platform-specific timeout implementation
 _is_windows = sys.platform == 'win32'
 
+def _is_main_thread():
+    """Check if running in the main thread."""
+    return threading.current_thread() is threading.main_thread()
+
 if not _is_windows:
-    # Unix: Use SIGALRM
+    # Unix: Use SIGALRM for main thread, threading for background threads
     @contextmanager
     def query_timeout(seconds: float):
         """Context manager for query timeout (Unix)."""
+        if not _is_main_thread():
+            # Use threading-based timeout for background threads
+            # (SIGALRM only works in main thread)
+            start_time = time.time()
+            try:
+                yield
+            finally:
+                elapsed = time.time() - start_time
+                if elapsed > seconds:
+                    raise QueryTimeoutError(f"Query timed out after {seconds}s")
+            return
+        
+        # Main thread: use SIGALRM
         def signal_handler(signum, frame):
             raise QueryTimeoutError(f"Query timed out after {seconds}s")
         
