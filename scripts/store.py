@@ -20,6 +20,7 @@ try:
     from scripts.migrations import run_migrations
     from scripts.exceptions import StorageError, ValidationError
     from scripts.models import Memory, SearchResult
+    from scripts.vector_ops import normalize, batch_cosine_similarity
 except ImportError:
     # Fallback if running directly without package structure
     import logging
