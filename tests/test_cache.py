@@ -9,7 +9,7 @@ from pathlib import Path
 # Add parent dir to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-import scripts.embed as embed_module
+from memento import embed as embed_module
 
 class TestMementoCache(unittest.TestCase):
     def setUp(self):

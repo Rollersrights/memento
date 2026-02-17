@@ -8,7 +8,7 @@ from pathlib import Path
 # Add parent dir to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from scripts.store import MemoryStore
+from memento.store import MemoryStore
 
 class TestMementoCore(unittest.TestCase):
     def setUp(self):

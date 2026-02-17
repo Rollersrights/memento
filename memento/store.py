@@ -367,17 +367,18 @@ class MemoryStore:
         # Use sqlite-vec for vector search
         where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
         
+        # sqlite-vec requires k = ? for KNN queries
         cursor = self.conn.execute(
             f"""
             SELECT v.id, v.distance
             FROM memories_vec v
             JOIN memories m ON m.id = v.id
             WHERE v.embedding MATCH ?
+            AND k = ?
             AND {where_sql}
             ORDER BY v.distance
-            LIMIT ?
             """,
-            (query_vector.tobytes(), *params, topk)
+            (query_vector.tobytes(), topk, *params)
         )
         
         similarities = [(row[0], 1.0 - row[1]) for row in cursor.fetchall()]

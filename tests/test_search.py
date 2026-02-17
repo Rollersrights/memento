@@ -9,17 +9,13 @@ from pathlib import Path
 # Add parent dir to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from scripts.store import MemoryStore
-from scripts.search import hybrid_bm25_vector_search, vector_search, init_fts5
+from memento.store import MemoryStore
 
 class TestMementoSearch(unittest.TestCase):
     def setUp(self):
         self.test_dir = tempfile.mkdtemp()
         self.db_path = os.path.join(self.test_dir, 'test_memory.db')
         self.store = MemoryStore(db_path=self.db_path)
-        
-        # Initialize FTS5 explicitly for manual inserts
-        init_fts5(self.store.conn)
         
         # Seed data
         self.store.remember("The IP address is 192.168.1.155", tags=["infra"])

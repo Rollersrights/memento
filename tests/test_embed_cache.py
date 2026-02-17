@@ -12,11 +12,10 @@ import tempfile
 # Add scripts to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'scripts'))
 
-from embed import (
+from memento.embed import (
     embed, 
     get_cache_stats, 
     clear_cache,
-    _get_embedder_type,
     _disk_cache
 )
 
