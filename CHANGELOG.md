@@ -6,9 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- **Query Timeout Support** - Cross-platform timeout for search operations (#14)
+  - New `timeout_ms` parameter in `recall()` method
+  - `QueryTimeoutError` exception for timeout handling
+  - Unix (SIGALRM) and Windows (threading) implementations
+  - Default 10s timeout prevents runaway queries
+
 ### Fixed
 - **Import paths in analyze_bottlenecks.py** - Fixed 'No module named scripts' error (#15)
 - Analyzer now correctly detects embedder and generates bottleneck reports
+- **SearchResult item assignment** - Fixed dict-like assignment for dynamic fields (#17)
+- **PersistentCache.get_cache_key** - Added missing method for test compatibility (#18)
 
 ## [0.2.1] - 2026-02-17
 
