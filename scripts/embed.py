@@ -13,6 +13,7 @@ import json
 import time
 from functools import lru_cache
 from typing import List, Union, Tuple, Optional
+from pathlib import Path
 
 # Cache model at module level for reuse
 _model = None
