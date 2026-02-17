@@ -47,8 +47,6 @@ DEFAULT_DB_PATH = os.environ.get('MEMORY_DB_PATH', config.storage.db_path)
 
 _stores: Dict[str, 'MemoryStore'] = {}
 _stores_lock = threading.Lock()
-_rate_limit_cache: Dict[str, List[float]] = {}
-_rate_limit_lock = threading.Lock()
 
 
 def get_store(db_path: str = DEFAULT_DB_PATH) -> 'MemoryStore':
@@ -65,6 +63,8 @@ class MemoryStore:
     def __init__(self, db_path: str = DEFAULT_DB_PATH):
         self.db_path = db_path
         self._write_lock = threading.Lock()
+        self._rate_limit_cache: Dict[str, List[float]] = {}
+        self._rate_limit_lock = threading.Lock()
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
@@ -157,13 +157,13 @@ class MemoryStore:
     def _check_rate_limit(self, key: str, limit: int = 60, window: int = 60) -> bool:
         """Simple rate limiter."""
         now = time.time()
-        with _rate_limit_lock:
-            if key not in _rate_limit_cache:
-                _rate_limit_cache[key] = []
-            _rate_limit_cache[key] = [t for t in _rate_limit_cache[key] if t > now - window]
-            if len(_rate_limit_cache[key]) >= limit:
+        with self._rate_limit_lock:
+            if key not in self._rate_limit_cache:
+                self._rate_limit_cache[key] = []
+            self._rate_limit_cache[key] = [t for t in self._rate_limit_cache[key] if t > now - window]
+            if len(self._rate_limit_cache[key]) >= limit:
                 return False
-            _rate_limit_cache[key].append(now)
+            self._rate_limit_cache[key].append(now)
             return True
 
     def _sanitize_text(self, text: str) -> str:
