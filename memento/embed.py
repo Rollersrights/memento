@@ -361,6 +361,39 @@ def _has_avx2() -> bool:
     except Exception:
         return False
 
+# ============================================================================
+# EMBEDDER DETECTION AT IMPORT TIME - Fix cold start issue
+# ============================================================================
+
+def _detect_best_embedder() -> str:
+    """Detect best embedder at import time, before any loading starts."""
+    # Check for AVX2 first
+    if not _has_avx2():
+        return 'pytorch'
+    
+    # Check if ONNX model exists
+    onnx_path = Path.home() / ".memento" / "models" / "all-MiniLM-L6-v2.onnx"
+    if not onnx_path.exists():
+        return 'pytorch'
+    
+    # Check if onnxruntime is available
+    try:
+        import onnxruntime as ort
+        # Quick test that it works
+        _ = ort.SessionOptions()
+        return 'onnx'
+    except ImportError:
+        return 'pytorch'
+    except Exception:
+        return 'pytorch'
+
+# Detect embedder type ONCE at import time
+_preferred_embedder = _detect_best_embedder()
+if _preferred_embedder == 'onnx':
+    _embedder_type = 'onnx'
+    _onnx_session = 'available'  # Mark for lazy loading
+    print("[Embed] ONNX Runtime detected and will be used for fast inference")
+
 def _try_onnx() -> bool:
     """Try to load ONNX Runtime with the optimized model."""
     global _onnx_session
