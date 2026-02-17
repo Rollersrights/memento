@@ -10,7 +10,8 @@ import json
 import time
 from pathlib import Path
 
-sys.path.insert(0, os.path.expanduser('~/.openclaw/workspace/memento/scripts'))
+# Add parent directory to path for proper 'scripts.X' imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 def analyze_bottlenecks():
     """Analyze current system for bottlenecks"""
@@ -20,9 +21,10 @@ def analyze_bottlenecks():
     # 1. Check cold start issue
     print("🔍 Analyzing cold start...")
     try:
-        from scripts.embed import get_embedder
+        from scripts.embed import embed
         start = time.time()
-        embedder = get_embedder()
+        # Test embedding - this will trigger model load if not already loaded
+        _ = embed("test query for cold start analysis")
         cold_time = (time.time() - start) * 1000
         
         if cold_time > 5000:  # > 5 seconds is bad
@@ -33,6 +35,9 @@ def analyze_bottlenecks():
                 'target': '<1000ms',
                 'solution': 'Pre-load model in background / lazy init optimization'
             })
+        else:
+            print(f"   ✅ Cold start: {cold_time:.0f}ms")
+            
     except Exception as e:
         bottlenecks.append({
             'priority': 'CRITICAL',
