@@ -32,7 +32,8 @@ class TestHighVolumeInsertion:
             doc_id = store.remember(
                 f"Stress test memory {i}: This is about topic {i % 10} with detail {i}",
                 importance=(i % 10) / 10.0,
-                tags=[f"topic{i % 10}", "stress"]
+                tags=[f"topic{i % 10}", "stress"],
+                source=f"stress100_{i}"
             )
             ids.add(doc_id)
         elapsed = time.perf_counter() - start
@@ -56,7 +57,8 @@ class TestHighVolumeInsertion:
             store.remember(
                 f"Memory {i}: {time.time()} topic-{i%20} detail-{i}",
                 importance=0.5,
-                tags=[f"group{i % 20}"]
+                tags=[f"group{i % 20}"],
+                source=f"stress500_{i}"
             )
         elapsed = time.perf_counter() - start
 
@@ -78,7 +80,8 @@ class TestHighVolumeInsertion:
         for i in range(1000):
             store.remember(
                 f"Large scale test {i}: {time.time()} area-{i%50}",
-                importance=0.5
+                importance=0.5,
+                source=f"stress1k_{i}"
             )
             if i % 200 == 0 and i > 0:
                 elapsed_so_far = time.perf_counter() - start
@@ -117,7 +120,8 @@ class TestConcurrentStress:
                 try:
                     store.remember(
                         f"Thread-{tid} item-{i} ts-{time.time()}",
-                        importance=0.5
+                        importance=0.5,
+                        source=f"thread_{tid}_{i}"
                     )
                     counts[tid] += 1
                 except Exception as e:
@@ -148,7 +152,8 @@ class TestConcurrentStress:
         store = MemoryStore(db_path=tmp_db)
         # Pre-seed
         for i in range(20):
-            store.remember(f"Seed data {i} about topic {i%5}", importance=0.5)
+            store.remember(f"Seed data {i} about topic {i%5}", importance=0.5,
+                           source=f"mixed_seed_{i}")
 
         errors = []
         write_count = [0]
@@ -157,7 +162,8 @@ class TestConcurrentStress:
         def writer():
             for i in range(20):
                 try:
-                    store.remember(f"Live write {i} ts-{time.time()}", importance=0.5)
+                    store.remember(f"Live write {i} ts-{time.time()}", importance=0.5,
+                                   source=f"mixed_w_{i}")
                     write_count[0] += 1
                 except Exception as e:
                     errors.append(("write", e))
@@ -214,7 +220,7 @@ class TestSearchUnderLoad:
         for i in range(200):
             topic_key = list(topics.keys())[i % len(topics)]
             text = f"{topics[topic_key]} - variation {i}"
-            store.remember(text, importance=0.5, tags=[topic_key])
+            store.remember(text, importance=0.5, tags=[topic_key], source=f"accuracy_{i}")
 
         # Search for each topic
         for topic_key, expected_content in topics.items():
@@ -241,7 +247,7 @@ class TestStability:
             for i in range(10):
                 doc_id = store.remember(
                     f"Cycle {cycle} item {i} timestamp {time.time()}",
-                    importance=0.5
+                    importance=0.5, source=f"cycle_{cycle}_{i}"
                 )
                 ids.append(doc_id)
 
@@ -264,7 +270,8 @@ class TestStability:
         store = MemoryStore(db_path=tmp_db)
 
         for i in range(50):
-            store.remember(f"GC pressure test {i} {time.time()}", importance=0.5)
+            store.remember(f"GC pressure test {i} {time.time()}", importance=0.5,
+                           source=f"gc_{i}")
             if i % 10 == 0:
                 gc.collect()
 

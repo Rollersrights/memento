@@ -1,91 +1,104 @@
-# Memento Performance Benchmark Report
-*Date: 2026-02-17*
-*Version: v0.2.0*
+# Memento Performance Benchmark
 
-## 🚀 Key Results
+**Date:** 2026-02-17  
+**Platform:** Linux 6.6.87 (WSL2), Python 3.12.3, x86_64  
+**Hardware:** Laptop (Brett's dev machine)  
+**Database:** SQLite + sqlite-vec, WAL mode
 
-| Metric | Result | vs Baseline |
-|--------|--------|-------------|
-| **Embedding Cache Speedup** | **274,235x** | Cold: 10.5s → Warm: 0.04ms |
-| **Batch Query Speedup** | **308.7x** | Sequential: 36ms → Batch: 0.12ms |
-| **Search Average** | **430ms** | First query cold, rest warm |
-| **Search (Cached)** | **9ms** | After warm-up |
+## Embedding Performance
 
-## 📊 Detailed Results
+| Metric | Value | Target | Status |
+|--------|-------|--------|--------|
+| Cold start (model load + first embed) | 4,411ms | <30,000ms | ✅ PASS |
+| Warm embed (LRU cache hit) | 0.006ms | <10ms | ✅ PASS |
+| Uncached single embed (model warm) | 11.2ms | <100ms | ✅ PASS |
+| Batch embed (20 items) | 4,456ms (223ms/item) | — | ⚠️ See note |
+| Cache speedup | 255x | >10x | ✅ PASS |
+| Embedder type | ONNX (single), PyTorch fallback (batch) | — | ⚠️ |
 
-### 1. Embedding Performance
-```
-Cold embed:  10,513ms (model loading + compute)
-Warm embed:  0.04ms   (cache hit)
-Speedup:     274,235x faster ⚡
-```
-**Analysis:** The LRU + persistent disk cache provides massive speedup for repeated queries.
+> **Note:** ONNX batch embedding fails with shape mismatch (#38), falling back to PyTorch.
+> Single-item ONNX is fast (~5ms), but batch triggers PyTorch reload (~4.4s total for 20 items).
 
-### 2. Search Performance
-```
-Queries tested: 5 different queries
-Average time:   430ms
-Fastest:        9ms (cached embedding)
-Slowest:        2,036ms (cold embedding)
-```
-**Analysis:** First query is slow due to model loading, subsequent queries are fast.
+## Store Performance
 
-### 3. Batch Query Optimization
-```
-Sequential: 361.69ms (10 queries)
-Batch:        1.17ms (10 queries)
-Speedup:      308.7x faster ⚡
-```
-**Analysis:** Batch mode is significantly faster for multiple queries.
+| Metric | Value | Target | Status |
+|--------|-------|--------|--------|
+| Remember (single) | 20.4ms median | <50ms | ✅ PASS |
+| Recall (5 results, seeded DB) | 5.3ms median | <50ms | ✅ PASS |
+| Recall p95 | 6.5ms | <100ms | ✅ PASS |
+| Recall at 10 memories | 0.6ms | — | ✅ |
+| Recall at 50 memories | 1.0ms | — | ✅ |
+| Recall at 100 memories | 0.5ms | — | ✅ |
 
-### 4. Cache Statistics
-```
-Backend:      PyTorch (CPU)
-RAM hits:     1
-RAM misses:   1
-Disk hits:    0
-Hit rate:     50.0%
-```
-**Analysis:** Cache is working correctly. Disk cache will populate over time.
+## Stress Test Results
 
-### 5. Storage Statistics
-```
-Total vectors:    54
-Collections:      conversations, knowledge
-Search backend:   NumPy
-```
+| Test | Result | Duration |
+|------|--------|----------|
+| 100 memories insert | ✅ PASS | ~5s |
+| 500 memories insert | ✅ PASS | ~12s |
+| 1000 memories insert | ✅ PASS | ~24s |
+| 4-thread concurrent write (25 each) | ✅ PASS | ~8s |
+| Mixed read/write (2w + 3r) | ❌ FAIL (#36) | Thread timeout crash |
+| Search accuracy at 200 | ⚠️ Partial | 4/5 topics found |
+| Create/delete cycles | ✅ PASS | — |
+| GC pressure | ✅ PASS | — |
 
-## 🎯 Performance Summary
+## Memory Usage
 
-### Strengths
-- ✅ **274,000x faster** with caching
-- ✅ **309x faster** batch queries
-- ✅ Sub-millisecond cached embeddings
-- ✅ PyTorch backend (ONNX available for AVX2)
+| Metric | Value | Target | Status |
+|--------|-------|--------|--------|
+| ONNX model estimated | 85MB | <200MB | ✅ PASS |
+| Process RSS (both models loaded) | 1,316MB | <500MB | ❌ FAIL (#38) |
+| Memory growth (50 ops) | 1,232KB | <10MB | ✅ PASS |
 
-### Opportunities
-- ⚠️ First query is slow (10s model loading)
-- ⚠️ Search could use FAISS/hnswlib for large DBs
-- ⚠️ No query timeout (could hang on huge DBs)
+> **Note:** RSS is high because ONNX batch failure loads PyTorch as fallback
+> without unloading ONNX. With only ONNX loaded: ~300MB estimated.
 
-## 📈 vs Previous Version (v0.1.0)
+## Database Size
 
-| Operation | v0.1.0 | v0.2.0 | Improvement |
-|-----------|--------|--------|-------------|
-| Cold embed | ~10s | 10.5s | ~same |
-| Warm embed | ~25ms | 0.04ms | **625x** |
-| Batch 10 queries | ~250ms | 1.17ms | **214x** |
-| Search (warm) | ~25ms | 9ms | **2.8x** |
+| Memories | DB Size | Per Memory |
+|----------|---------|------------|
+| 10 | 4KB | ~400B |
+| 50 | 1.7MB | ~34KB |
+| 100 | 1.7MB | ~19KB |
 
-## 🏆 Conclusion
+> DB size jumps at ~50 memories due to sqlite-vec page allocation.
+> Per-memory cost decreases as DB grows (amortized overhead).
 
-**Memento v0.2.0 delivers exceptional performance:**
-- Sub-millisecond cached operations
-- Massive speedups through intelligent caching
-- Batch optimization for multi-query workloads
-- Ready for production use
+## Cache Performance
 
-**Next optimizations:**
-- Add FAISS/hnswlib for 10,000+ vectors
-- Implement query timeout
-- ONNX Runtime for AVX2 machines
+| Metric | Value |
+|--------|-------|
+| LRU cache max size | 1,000 entries |
+| LRU hit rate | 20% (test run) |
+| Disk cache persistence | ✅ Working |
+| Cache bypass (use_cache=False) | ✅ Working |
+
+## Known Issues Affecting Performance
+
+1. **#36 (P0):** `recall()` crashes in non-main threads (SIGALRM)
+2. **#38 (P1):** ONNX batch fails → PyTorch fallback → 1.3GB RSS
+3. **#37 (P1):** `unload_model()` crashes (can't free memory)
+
+## Test Summary
+
+| Suite | Tests | Passed | Failed |
+|-------|-------|--------|--------|
+| test_models.py | 10 | 10 | 0 |
+| test_edge_cases.py | 60 | 58 | 2 |
+| test_performance.py | 13 | 12 | 1 |
+| test_stress.py | 8 | 6 | 2 |
+| **Total** | **91** | **86** | **5** |
+
+All 5 failures are real bugs (not test issues):
+- 3x SIGALRM in threads (#36)
+- 1x UnboundLocalError in unload_model (#37)
+- 1x Search accuracy at scale (vector quality / k-limit interaction)
+
+## Recommendations
+
+1. **Fix #36 first** — thread-safe timeout is critical for any real-world deployment
+2. **Fix #38** — ONNX batch or cleanup prevents 1.3GB memory waste
+3. **Fix #37** — unload_model needs `global _idle_timer` declaration
+4. **Increase k multiplier** — when filtering, request k*3 from vec table to compensate for filter loss
+5. **Target Pi Zero:** Memory must drop to <300MB (fix #38 gets there)
