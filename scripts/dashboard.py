@@ -73,8 +73,8 @@ def load_history():
                 for key in ['timestamps', 'vector_counts', 'db_sizes']:
                     if key in data:
                         HISTORY_CACHE[key] = deque(data[key], maxlen=60)
-        except:
-            pass
+        except Exception:
+            pass  # History file missing or corrupted, start fresh
 
 def save_history():
     """Save historical data to file."""
@@ -86,8 +86,8 @@ def save_history():
                 'vector_counts': list(HISTORY_CACHE['vector_counts']),
                 'db_sizes': list(HISTORY_CACHE['db_sizes'])
             }, f)
-    except:
-        pass
+    except Exception:
+        pass  # Ignore write errors (permissions, disk full)
 
 def update_history(stats):
     """Add current stats to history."""
@@ -261,8 +261,8 @@ def get_cron_status():
                                 if job_status == "error":
                                     status["alerts"].append("Document processor failed!")
                             break
-    except:
-        pass
+    except Exception:
+        pass  # openclaw not installed or cron not accessible
     
     # Fallback
     if status["session_watcher"] == "unknown":
@@ -278,8 +278,8 @@ def get_cron_status():
                 status["session_watcher"] = "✓ working"
                 status["last_session_run"] = "recent"
             conn.close()
-        except:
-            pass
+        except Exception:
+            pass  # Database not accessible
     
     return status
 
