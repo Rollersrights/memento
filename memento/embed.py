@@ -305,7 +305,8 @@ def _embed_onnx(texts: List[str]) -> List[List[float]]:
     
     ort_inputs = {
         'input_ids': inputs['input_ids'].astype(np.int64),
-        'attention_mask': inputs['attention_mask'].astype(np.int64)
+        'attention_mask': inputs['attention_mask'].astype(np.int64),
+        'token_type_ids': inputs.get('token_type_ids', np.zeros_like(inputs['input_ids'])).astype(np.int64)
     }
     
     outputs = session.run(None, ort_inputs)[0]
