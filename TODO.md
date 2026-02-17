@@ -43,12 +43,12 @@ Use this file to track all work. Check off items when done, add your name when s
 | Ticket | Description | Status | Assignee | Notes |
 |--------|-------------|--------|----------|-------|
 | #12 | Add type hints to `store.py` | [@Bob] | @Bob | MemoryStore class |
-| #13 | Add type hints to `embed.py` | [ ] | | embed() function |
+| #13 | Add type hints to `embed.py` | [x] | @Bob | Done! |
 | #14 | Add type hints to `cli.py` | [ ] | | All CLI functions |
 | #15 | Add type hints to `search.py` | [ ] | | Search functions |
 | #16 | Create `scripts/types.py` | [ ] | | Shared type definitions |
-| #17 | Fix bare `except:` clauses | [ ] | | 8 occurrences in codebase |
-| #18 | Create `MementoError` class | [ ] | | Custom exceptions |
+| #17 | Fix bare `except:` clauses | [x] | @Rita | Fixed 4 in dashboard.py |
+| #18 | Create `MementoError` class | [x] | @Rita | scripts/exceptions.py |
 
 ### Testing
 
