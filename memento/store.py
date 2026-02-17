@@ -36,7 +36,7 @@ except ImportError:
     def get_logger(name): return logging.getLogger(name)
     class MockConfig:
         class Storage:
-            db_path = os.environ.get('MEMORY_DB_PATH', os.path.expanduser("~/.memento/memory.db"))
+            db_path = os.environ.get('MEMORY_DB_PATH', os.path.expanduser("~/.openclaw/memento/memory.db"))
         storage = Storage()
     def get_config(): return MockConfig()
     def run_migrations(conn): pass

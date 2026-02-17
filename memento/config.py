@@ -10,8 +10,8 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 from dataclasses import dataclass, field
 
-# Default Paths
-DEFAULT_HOME = Path.home() / ".memento"
+# Default Paths - Unified location under .openclaw
+DEFAULT_HOME = Path.home() / ".openclaw" / "memento"
 DEFAULT_CONFIG_PATH = DEFAULT_HOME / "config.yaml"
 SYSTEM_CONFIG_PATH = Path("/etc/memento/config.yaml")
 

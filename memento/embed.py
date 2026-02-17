@@ -59,7 +59,7 @@ def _load_model_background():
         else:
             # Pre-load PyTorch model
             from sentence_transformers import SentenceTransformer
-            cache_dir = os.path.expanduser("~/.memento/models")
+            cache_dir = os.path.expanduser("~/.openclaw/memento/models")
             os.makedirs(cache_dir, exist_ok=True)
             _model = SentenceTransformer(
                 "sentence-transformers/all-MiniLM-L6-v2",
@@ -237,7 +237,7 @@ def get_memory_usage() -> dict:
 class PersistentCache:
     """SQLite-backed persistent cache for embeddings (binary blob storage)."""
     def __init__(self) -> None:
-        self.db_path = os.path.expanduser("~/.memento/cache.db")
+        self.db_path = os.path.expanduser("~/.openclaw/memento/cache.db")
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         self._init_db()
         
@@ -518,7 +518,7 @@ def _get_onnx_tokenizer():
     global _onnx_tokenizer
     if _onnx_tokenizer is None:
         from transformers import AutoTokenizer
-        cache_dir = os.path.expanduser("~/.memento/models")
+        cache_dir = os.path.expanduser("~/.openclaw/memento/models")
         _onnx_tokenizer = AutoTokenizer.from_pretrained(
             "sentence-transformers/all-MiniLM-L6-v2",
             cache_dir=cache_dir
@@ -599,7 +599,7 @@ def _embed_pytorch(texts: List[str]) -> List[List[float]]:
     
     if _model is None:
         from sentence_transformers import SentenceTransformer
-        cache_dir = os.path.expanduser("~/.memento/models")
+        cache_dir = os.path.expanduser("~/.openclaw/memento/models")
         os.makedirs(cache_dir, exist_ok=True)
         _model = SentenceTransformer(
             "sentence-transformers/all-MiniLM-L6-v2",

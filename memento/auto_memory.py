@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 
 # Ensure Memento is available
-sys.path.insert(0, os.path.expanduser('~/.openclaw/workspace/skills/memory-zvec/scripts'))
+sys.path.insert(0, os.path.expanduser('~/.openclaw/workspace/memento'))
 
 class AutoMemory:
     """Automatic memory storage with significance detection."""
@@ -25,8 +25,8 @@ class AutoMemory:
     def _init_store(self):
         """Initialize Memento store with fallback."""
         try:
-            from store import MemoryStore
-            self.store = MemoryStore()
+            from memento.store import get_store
+            self.store = get_store()
             self.db_path = self.store.db_path
             self._log_status(f"✅ Memento initialized: {self.db_path}")
         except Exception as e:
@@ -35,7 +35,7 @@ class AutoMemory:
             
     def _log_status(self, msg):
         """Log to file for persistence across sessions."""
-        log_file = Path.home() / ".openclaw/memory/automemory.log"
+        log_file = Path.home() / ".openclaw/memento/automemory.log"
         log_file.parent.mkdir(parents=True, exist_ok=True)
         with open(log_file, 'a') as f:
             f.write(f"[{datetime.now().isoformat()}] {msg}\n")
@@ -127,8 +127,8 @@ class AutoMemory:
         
         # Try rollback
         try:
-            backup = Path.home() / ".openclaw/memory/memory.db.backup"
-            db = Path.home() / ".openclaw/memory/memory.db"
+            backup = Path.home() / ".openclaw/memento/memory.db.backup"
+            db = Path.home() / ".openclaw/memento/memory.db"
             if backup.exists():
                 import shutil
                 shutil.copy(backup, db)
@@ -159,8 +159,8 @@ class AutoMemory:
             import shutil
             from datetime import datetime
             
-            db = Path.home() / ".openclaw/memory/memory.db"
-            backup = Path.home() / f".openclaw/memory/backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+            db = Path.home() / ".openclaw/memento/memory.db"
+            backup = Path.home() / f".openclaw/memento/backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
             
             if db.exists():
                 shutil.copy(db, backup)
