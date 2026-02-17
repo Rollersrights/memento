@@ -13,15 +13,6 @@ import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 
-@pytest.fixture(autouse=True)
-def reset_rate_limiter():
-    """Reset the global rate limiter before each test so tests don't poison each other."""
-    import memento.store as store_mod
-    store_mod._rate_limit_cache.clear()
-    yield
-    store_mod._rate_limit_cache.clear()
-
-
 @pytest.fixture
 def tmp_db(tmp_path):
     """Provide a fresh temp DB path (file doesn't exist yet)."""

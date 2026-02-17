@@ -305,11 +305,13 @@ def _embed_onnx(texts: List[str]) -> List[List[float]]:
     # Process individually to avoid ONNX batch shape issues
     # See Issue #38: ONNX has buffer reuse problems with variable batch sizes
     if len(texts) == 1:
-        return _embed_onnx_single(texts[0], session, tokenizer)
+        result = _embed_onnx_single(texts[0], session, tokenizer)
+        return [result]  # Always return List[List[float]]
     
     results = []
     for text in texts:
         results.append(_embed_onnx_single(text, session, tokenizer))
+    print(f"DEBUG _embed_onnx: batch results type={type(results)}, len={len(results)}" , file=sys.stderr)
     return results
 
 
@@ -335,7 +337,9 @@ def _embed_onnx_single(text: str, session, tokenizer) -> List[float]:
     # Normalize
     embeddings = embeddings / np.linalg.norm(embeddings, axis=1, keepdims=True)
     
-    return embeddings[0].tolist()
+    # Convert to Python floats (not np.float32) and ensure list
+    result = [float(x) for x in embeddings[0]]
+    return result
 
 
 def _embed_pytorch(texts: List[str]) -> List[List[float]]:
