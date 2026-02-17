@@ -7,6 +7,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **Model Memory Management** - Issue #19
+  - `unload_model()` function to free ~80MB RAM
+  - `set_idle_timeout(minutes)` for automatic unload after inactivity
+  - `get_memory_usage()` to check model RAM status
+  - Model reloads transparently on next embed() call
 - **Background Model Loading** - Fixes cold start latency (#13)
   - Model loads in background thread on module import
   - `warmup()` function for explicit pre-loading

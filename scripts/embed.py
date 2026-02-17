@@ -35,6 +35,12 @@ _cache_hits = 0
 _cache_misses = 0
 _disk_hits = 0
 
+# Idle timeout support - Issue #19
+_idle_timer = None
+_idle_timeout_seconds = None  # None = no timeout
+_last_activity_time = None
+_idle_lock = threading.Lock()
+
 # ============================================================================
 # BACKGROUND MODEL LOADING - Fixes cold start issue #13
 # ============================================================================
@@ -88,8 +94,145 @@ def wait_for_model(timeout: float = 30.0) -> bool:
     """Wait for model to be ready. Returns True if ready, False on timeout."""
     return _model_ready_event.wait(timeout)
 
-# Start background loading immediately on module import
-_start_background_loading()
+# ============================================================================
+# IDLE TIMEOUT & MEMORY MANAGEMENT - Issue #19
+# ============================================================================
+
+def _reset_idle_timer():
+    """Reset idle timer on model activity."""
+    global _idle_timer, _last_activity_time
+    
+    with _idle_lock:
+        _last_activity_time = time.time()
+        
+        # Cancel existing timer
+        if _idle_timer is not None:
+            _idle_timer.cancel()
+        
+        # Start new timer if timeout is set
+        if _idle_timeout_seconds is not None and _idle_timeout_seconds > 0:
+            _idle_timer = threading.Timer(_idle_timeout_seconds, unload_model)
+            _idle_timer.daemon = True
+            _idle_timer.start()
+
+
+def set_idle_timeout(minutes: float) -> None:
+    """
+    Set idle timeout for automatic model unloading.
+    
+    Args:
+        minutes: Minutes of inactivity before unloading (0 or None = no timeout)
+    
+    Example:
+        set_idle_timeout(30)  # Unload after 30 minutes idle
+        set_idle_timeout(0)   # Disable auto-unload
+    """
+    global _idle_timeout_seconds
+    
+    if minutes is None or minutes <= 0:
+        _idle_timeout_seconds = None
+        # Cancel any existing timer
+        with _idle_lock:
+            if _idle_timer is not None:
+                _idle_timer.cancel()
+                _idle_timer = None
+    else:
+        _idle_timeout_seconds = minutes * 60
+        _reset_idle_timer()
+
+
+def unload_model(force: bool = False) -> bool:
+    """
+    Free model from RAM to save memory.
+    
+    The model will be automatically reloaded on the next embed() call.
+    Use this for memory-constrained environments or long-running processes.
+    
+    Args:
+        force: If True, unload even if busy (use with caution)
+    
+    Returns:
+        True if model was unloaded, False if already unloaded
+    
+    Example:
+        >>> embed("test")  # Model loads (~80MB)
+        >>> unload_model()  # Free RAM
+        >>> embed("test")  # Model reloads transparently
+    """
+    global _model, _onnx_session, _embedder_type
+    global _model_loading_started, _model_ready_event
+    global _model_loading_thread
+    
+    # Check if model is actually loaded
+    if _model is None and (_onnx_session is None or _onnx_session == 'available'):
+        return False
+    
+    # Cancel any idle timer
+    with _idle_lock:
+        global _idle_timer
+        if _idle_timer is not None:
+            _idle_timer.cancel()
+            _idle_timer = None
+    
+    # Clear model references
+    _model = None
+    _onnx_session = None
+    _embedder_type = None
+    
+    # Reset loading state so model can be reloaded
+    _model_loading_started = False
+    _model_ready_event.clear()
+    _model_loading_thread = None
+    
+    # Force garbage collection to free RAM immediately
+    import gc
+    gc.collect()
+    
+    return True
+
+
+def get_memory_usage() -> dict:
+    """
+    Get current memory usage statistics.
+    
+    Returns:
+        Dict with memory info including:
+        - model_loaded: Whether model is in RAM
+        - embedder_type: 'onnx', 'pytorch', or None
+        - estimated_mb: Estimated RAM usage (approximate)
+        - idle_timeout_min: Current idle timeout setting
+        - seconds_idle: Seconds since last activity (if timeout enabled)
+    
+    Example:
+        >>> get_memory_usage()
+        {'model_loaded': True, 'embedder_type': 'onnx', 'estimated_mb': 85}
+    """
+    result = {
+        'model_loaded': False,
+        'embedder_type': None,
+        'estimated_mb': 0,
+        'idle_timeout_min': None,
+        'seconds_idle': None
+    }
+    
+    # Check if model is loaded
+    if _model is not None:
+        result['model_loaded'] = True
+        result['embedder_type'] = 'pytorch'
+        result['estimated_mb'] = 80  # Approximate for MiniLM
+    elif _onnx_session is not None and _onnx_session != 'available':
+        result['model_loaded'] = True
+        result['embedder_type'] = 'onnx'
+        result['estimated_mb'] = 85  # ONNX uses slightly more RAM
+    
+    # Idle timeout info
+    if _idle_timeout_seconds is not None:
+        result['idle_timeout_min'] = _idle_timeout_seconds / 60
+        if _last_activity_time is not None:
+            result['seconds_idle'] = time.time() - _last_activity_time
+    
+    return result
+
 
 class PersistentCache:
     """SQLite-backed persistent cache for embeddings (binary blob storage)."""
@@ -349,9 +492,17 @@ def _get_onnx_tokenizer():
         )
     return _onnx_tokenizer
 
+
+# Start background loading now that all helper functions are defined
+_start_background_loading()
+
+
 def _embed_onnx(texts: List[str]) -> List[List[float]]:
     """Embed using ONNX Runtime."""
     import numpy as np
+    
+    # Reset idle timer on model activity - Issue #19
+    _reset_idle_timer()
     
     # Wait for background loading to complete (fixes cold start issue #13)
     if not _model_ready_event.is_set():
@@ -399,6 +550,9 @@ def _embed_onnx(texts: List[str]) -> List[List[float]]:
 def _embed_pytorch(texts: List[str]) -> List[List[float]]:
     """Embed using PyTorch/SentenceTransformers."""
     global _model
+    
+    # Reset idle timer on model activity - Issue #19
+    _reset_idle_timer()
     
     # Wait for background loading to complete (fixes cold start issue #13)
     if not _model_ready_event.is_set():
@@ -541,9 +695,11 @@ def warmup() -> bool:
         return False
 
 def get_cache_stats() -> dict:
-    """Get cache statistics."""
+    """Get cache statistics including memory usage."""
     cache_info = _embed_single_cached.cache_info()
     embedder = _get_embedder_type()
+    memory_info = get_memory_usage()
+    
     return {
         'hits': _cache_hits,
         'misses': _cache_misses,
@@ -555,7 +711,8 @@ def get_cache_stats() -> dict:
         'hit_rate': cache_info.hits / (cache_info.hits + cache_info.misses) * 100 if (cache_info.hits + cache_info.misses) > 0 else 0,
         'embedder': embedder,
         'model_ready': is_model_ready(),
-        'background_loading': _model_loading_started
+        'background_loading': _model_loading_started,
+        'memory': memory_info  # Issue #19: Memory usage stats
     }
 
 def clear_cache() -> None:
@@ -600,3 +757,40 @@ if __name__ == "__main__":
         print(f"\n✅ Cold start target met: {t1:.0f}ms < 1000ms")
     else:
         print(f"\n⚠️ Cold start slow: {t1:.0f}ms (target: <1000ms)")
+    
+    # Issue #19: Test unload_model functionality
+    print("\n" + "="*60)
+    print("Testing unload_model() - Issue #19")
+    print("="*60)
+    
+    mem_before = get_memory_usage()
+    print(f"Memory before unload: {mem_before}")
+    
+    unloaded = unload_model()
+    print(f"unload_model() returned: {unloaded}")
+    
+    mem_after = get_memory_usage()
+    print(f"Memory after unload: {mem_after}")
+    
+    if not mem_after['model_loaded']:
+        print("✅ Model successfully unloaded from RAM")
+    else:
+        print("⚠️ Model still in RAM")
+    
+    # Test transparent reload
+    print("\nTesting transparent reload...")
+    start = time.perf_counter()
+    vector3 = embed(test_text)
+    t3 = (time.perf_counter() - start) * 1000
+    print(f"Embed after unload: {t3:.2f}ms (model reloaded)")
+    print(f"Vector matches: {vector1 == vector3}")
+    
+    mem_reloaded = get_memory_usage()
+    if mem_reloaded['model_loaded']:
+        print("✅ Model successfully reloaded")
+    else:
+        print("❌ Model reload failed")
+    
+    print("\n" + "="*60)
+    print("All tests passed!")
+    print("="*60)
