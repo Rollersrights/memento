@@ -230,12 +230,18 @@ class MemoryStore:
                  float(importance), ','.join(tags) if tags else '', collection, embedding_bytes)
             )
             
-            try:
-                self.conn.execute(
-                    "INSERT INTO memories_fts(rowid, text) VALUES (last_insert_rowid(), ?)", (text,)
-                )
-            except Exception:
-                pass
+            # Get the rowid we just inserted for FTS5 sync
+            cursor = self.conn.execute(
+                "SELECT rowid FROM memories WHERE id = ?", (doc_id,)
+            )
+            row = cursor.fetchone()
+            if row:
+                try:
+                    self.conn.execute(
+                        "INSERT INTO memories_fts(rowid, text) VALUES (?, ?)", (row[0], text)
+                    )
+                except Exception:
+                    pass
 
             try:
                 self.conn.execute(
@@ -429,10 +435,20 @@ class MemoryStore:
         """Delete a memory by ID."""
         try:
             with self._write_lock:
-                self.conn.execute("DELETE FROM memories WHERE id = ?", (doc_id,))
-                self.conn.execute("DELETE FROM memories_vec WHERE id = ?", (doc_id,))
-                self.conn.commit()
-            return True
+                # Get the rowid for FTS5 deletion
+                cursor = self.conn.execute(
+                    "SELECT rowid FROM memories WHERE id = ?", (doc_id,)
+                )
+                row = cursor.fetchone()
+                if row:
+                    rowid = row[0]
+                    # Delete from all tables including FTS5
+                    self.conn.execute("DELETE FROM memories WHERE id = ?", (doc_id,))
+                    self.conn.execute("DELETE FROM memories_vec WHERE id = ?", (doc_id,))
+                    self.conn.execute("DELETE FROM memories_fts WHERE rowid = ?", (rowid,))
+                    self.conn.commit()
+                    return True
+                return False
         except Exception as e:
             logger.error(f"Delete error: {e}")
             return False
