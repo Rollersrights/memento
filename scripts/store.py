@@ -16,12 +16,21 @@ import numpy as np
 
 try:
     from scripts.logging_config import get_logger
+    from scripts.config import get_config
+    from scripts.migrations import run_migrations
 except ImportError:
     # Fallback if running directly without package structure
     import logging
     def get_logger(name): return logging.getLogger(name)
+    class MockConfig:
+        class Storage:
+            db_path = os.environ.get('MEMORY_DB_PATH', os.path.expanduser("~/.memento/memory.db"))
+        storage = Storage()
+    def get_config(): return MockConfig()
+    def run_migrations(conn): pass
 
 logger = get_logger("store")
+config = get_config()
 
 # Default storage path (override with MEMORY_DB_PATH env var)
 DEFAULT_DB_PATH = os.environ.get('MEMORY_DB_PATH', os.path.expanduser("~/.memento/memory.db"))
@@ -65,6 +74,9 @@ class MemoryStore:
         # Enable WAL mode for better concurrency
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA synchronous=NORMAL")
+        
+        # Run migrations
+        run_migrations(self.conn)
         
         # In-memory vector cache for fast search
         self._vectors = {}  # id -> numpy array
