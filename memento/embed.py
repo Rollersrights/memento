@@ -120,6 +120,7 @@ def unload_model(force: bool = False) -> bool:
     """Free model from RAM."""
     global _onnx_session, _pytorch_model, _embedder_type
     global _model_loading_started, _model_ready_event, _model_loading_thread
+    global _idle_timer  # Add this line
     
     unloaded = False
     if _onnx_session is not None:
