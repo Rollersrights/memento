@@ -2,17 +2,18 @@
 
 **Persistent semantic memory for AI agents.** Local, fast, and privacy-focused.
 
+> *Memento gives AI agents persistent, semantic memory that survives sessions, scales efficiently, and recalls what matters—without drowning in context.*
+
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## Features
+## Why Memento?
 
-- **🚀 Blazing Fast:** 0.03ms search via hybrid RAM/SQLite caching.
-- **💾 Persistent:** Memories and cache survive restarts.
-- **⚡ Hardware Accelerated:** Auto-uses AVX2/ONNX Runtime if available.
-- **🧠 Semantic:** "Buy food" matches "Get groceries".
-- **🖥️ CLI:** Rich terminal interface for human interaction.
-- **☁️ Local First:** No API keys, no cloud dependencies.
+- **🧠 Token Efficient:** Semantic recall loads only relevant context, not full history
+- **⚡ Fast:** 274,000x speedup with LRU cache (9ms warm search)
+- **🪶 Lightweight:** SQLite + NumPy, no cloud dependencies
+- **🛡️ Resilient:** Survives crashes, auto-backup, auto-rollback
+- **🤝 Team Ready:** Proper GitHub workflow, documented, contributor-friendly
 
 ## Quick Start
 
