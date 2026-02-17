@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- **Background Model Loading** - Fixes cold start latency (#13)
+  - Model loads in background thread on module import
+  - `warmup()` function for explicit pre-loading
+  - `is_model_ready()` and `wait_for_model()` for status checking
+  - Cold start reduced from ~10s to ~1s
+
 ### Fixed
 - **Import paths in analyze_bottlenecks.py** - Fixed 'No module named scripts' error (#15)
 - Analyzer now correctly detects embedder and generates bottleneck reports
