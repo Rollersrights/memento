@@ -19,7 +19,7 @@ try:
     from scripts.config import get_config
     from scripts.migrations import run_migrations
     from scripts.exceptions import StorageError, ValidationError
-    from scripts.types import Memory, SearchResult
+    from scripts.models import Memory, SearchResult
 except ImportError:
     # Fallback if running directly without package structure
     import logging
