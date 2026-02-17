@@ -67,15 +67,21 @@ def print_results(results: List[dict], output_format: str = 'table'):
             print("No memories found.")
         return
 
+    # Convert SearchResult objects to dicts
+    if results and hasattr(results[0], 'to_dict'):
+        dict_results = [r.to_dict() for r in results]
+    else:
+        dict_results = results
+
     # JSON output for piping/scripting
     if output_format == 'json' or not sys.stdout.isatty():
-        print(json.dumps(results, indent=2))
+        print(json.dumps(dict_results, indent=2))
         return
 
     # Plain text for simple grep
     if output_format == 'text':
-        for r in results:
-            print(f"[{r['score']:.3f}] {r['text']}")
+        for r in dict_results:
+            print(f"[{r.get('score', 0):.3f}] {r.get('text', '')}")
         return
 
     # Rich Table (Human readable)
@@ -85,28 +91,28 @@ def print_results(results: List[dict], output_format: str = 'table'):
         table.add_column("Score", style="green", justify="right", width=6)
         table.add_column("Text", style="white")
         table.add_column("Time", style="blue", width=10)
-        
-        for r in results:
-            # Highlight tags if present in text (naive)
-            text = r['text'].replace('\n', ' ')
+
+        for r in dict_results:
+            text = r.get('text', '').replace('\n', ' ')
             if len(text) > 100:
                 text = text[:97] + "..."
-            
+
             table.add_row(
-                r['id'][:8],
-                f"{r['score']:.3f}",
+                r.get('id', '')[:8],
+                f"{r.get('score', 0):.3f}",
                 text,
-                format_time(r['timestamp'])
+                format_time(r.get('timestamp', 0))
             )
         CONSOLE.print(table)
     else:
         # Fallback table
         print(f"{'ID':<10} {'SCORE':<8} {'TEXT'}")
         print("-" * 60)
-        for r in results:
-            text = r['text'].replace('\n', ' ')
-            if len(text) > 50: text = text[:47] + "..."
-            print(f"{r['id'][:8]:<10} {r['score']:.3f}    {text}")
+        for r in dict_results:
+            text = r.get('text', '').replace('\n', ' ')
+            if len(text) > 50:
+                text = text[:47] + "..."
+            print(f"{r.get('id', '')[:8]:<10} {r.get('score', 0):.3f}    {text}")
 
 def cmd_remember(args: argparse.Namespace) -> None:
     """Store a memory."""
