@@ -2,7 +2,8 @@
 """
 Embedding wrapper for all-MiniLM-L6-v2
 Lightweight, local, no API calls
-With LRU caching, Persistent Disk Cache (SQLite), and AVX2/ONNX optimization
+With LRU caching, Persistent Disk Cache (SQLite), AVX2/ONNX optimization,
+and BACKGROUND LOADING for fast cold start.
 """
 
 import os
@@ -11,9 +12,16 @@ import hashlib
 import sqlite3
 import json
 import time
+import threading
 from functools import lru_cache
 from typing import List, Union, Tuple, Optional
 from pathlib import Path
+
+# Background loading support
+_model_loading_thread = None
+_model_ready_event = threading.Event()
+_model_loading_started = False
+_model_loading_lock = threading.Lock()
 
 # Cache model at module level for reuse
 _model = None
@@ -26,6 +34,62 @@ _onnx_tokenizer = None  # Cached tokenizer for ONNX path
 _cache_hits = 0
 _cache_misses = 0
 _disk_hits = 0
+
+# ============================================================================
+# BACKGROUND MODEL LOADING - Fixes cold start issue #13
+# ============================================================================
+
+def _load_model_background():
+    """Load model in background thread to hide cold start latency."""
+    global _model, _onnx_session, _embedder_type
+    
+    try:
+        # Detect best embedder type
+        embedder = _get_embedder_type()
+        
+        if embedder == 'onnx':
+            # Pre-load ONNX model
+            _load_onnx_model()
+        else:
+            # Pre-load PyTorch model
+            from sentence_transformers import SentenceTransformer
+            cache_dir = os.path.expanduser("~/.memento/models")
+            os.makedirs(cache_dir, exist_ok=True)
+            _model = SentenceTransformer(
+                "sentence-transformers/all-MiniLM-L6-v2",
+                cache_folder=cache_dir
+            )
+        
+        # Signal that model is ready
+        _model_ready_event.set()
+        
+    except Exception as e:
+        print(f"[Embed] Background loading failed: {e}", file=sys.stderr)
+        # Still signal ready to prevent blocking forever
+        _model_ready_event.set()
+
+def _start_background_loading():
+    """Start background model loading thread (call once on import)."""
+    global _model_loading_thread, _model_loading_started
+    
+    with _model_loading_lock:
+        if _model_loading_started:
+            return
+        _model_loading_started = True
+        
+        _model_loading_thread = threading.Thread(target=_load_model_background, daemon=True)
+        _model_loading_thread.start()
+
+def is_model_ready() -> bool:
+    """Check if model has finished loading in background."""
+    return _model_ready_event.is_set()
+
+def wait_for_model(timeout: float = 30.0) -> bool:
+    """Wait for model to be ready. Returns True if ready, False on timeout."""
+    return _model_ready_event.wait(timeout)
+
+# Start background loading immediately on module import
+_start_background_loading()
 
 class PersistentCache:
     """SQLite-backed persistent cache for embeddings (binary blob storage)."""
@@ -285,6 +349,12 @@ def _embed_onnx(texts: List[str]) -> List[List[float]]:
     """Embed using ONNX Runtime."""
     import numpy as np
     
+    # Wait for background loading to complete (fixes cold start issue #13)
+    if not _model_ready_event.is_set():
+        print("[Embed] Loading ONNX model (one-time)...", file=sys.stderr, flush=True)
+        if not wait_for_model(timeout=60.0):
+            print("[Embed] ONNX model loading timed out, forcing load...", file=sys.stderr)
+    
     session = _load_onnx_model()
     if session is None:
         # Fallback to PyTorch
@@ -325,6 +395,12 @@ def _embed_onnx(texts: List[str]) -> List[List[float]]:
 def _embed_pytorch(texts: List[str]) -> List[List[float]]:
     """Embed using PyTorch/SentenceTransformers."""
     global _model
+    
+    # Wait for background loading to complete (fixes cold start issue #13)
+    if not _model_ready_event.is_set():
+        print("[Embed] Loading model (one-time)...", file=sys.stderr, flush=True)
+        if not wait_for_model(timeout=60.0):
+            print("[Embed] Model loading timed out, forcing load...", file=sys.stderr)
     
     if _model is None:
         from sentence_transformers import SentenceTransformer
@@ -439,6 +515,27 @@ def get_max_tokens() -> int:
     """Return max token length (256 for MiniLM-L6-v2)."""
     return 256
 
+def warmup() -> bool:
+    """
+    Pre-load model to eliminate cold start latency.
+    Call this at system startup or in cron jobs.
+    
+    Returns:
+        True if model is ready, False on timeout
+    """
+    if is_model_ready():
+        return True
+    
+    print("[Embed] Warming up model (background loading)...", file=sys.stderr, flush=True)
+    
+    # Wait for background loading to complete
+    if wait_for_model(timeout=60.0):
+        print("[Embed] Model ready!", file=sys.stderr)
+        return True
+    else:
+        print("[Embed] Model loading timed out", file=sys.stderr)
+        return False
+
 def get_cache_stats() -> dict:
     """Get cache statistics."""
     cache_info = _embed_single_cached.cache_info()
@@ -452,7 +549,9 @@ def get_cache_stats() -> dict:
         'maxsize': cache_info.maxsize,
         'currsize': cache_info.currsize,
         'hit_rate': cache_info.hits / (cache_info.hits + cache_info.misses) * 100 if (cache_info.hits + cache_info.misses) > 0 else 0,
-        'embedder': embedder
+        'embedder': embedder,
+        'model_ready': is_model_ready(),
+        'background_loading': _model_loading_started
     }
 
 def clear_cache() -> None:
@@ -467,15 +566,17 @@ if __name__ == "__main__":
     # Test with auto-detect
     print("Testing embedding with automatic hardware detection...")
     print(f"Embedder type: {_get_embedder_type()}")
+    print(f"Background loading: {_model_loading_started}")
+    print(f"Model ready: {is_model_ready()}")
     
     test_text = "This is a test sentence for embedding."
     
-    # First call - cache miss
+    # First call - test cold start with background loading
     import time
     start = time.perf_counter()
     vector1 = embed(test_text)
     t1 = (time.perf_counter() - start) * 1000
-    print(f"First embed: {t1:.2f}ms (cold/disk)")
+    print(f"\nFirst embed: {t1:.2f}ms (cold start with background loading)")
     
     # Second call - cache hit
     start = time.perf_counter()
@@ -483,8 +584,15 @@ if __name__ == "__main__":
     t2 = (time.perf_counter() - start) * 1000
     print(f"Second embed: {t2:.2f}ms (cached)")
     
-    print(f"Speedup: {t1/t2:.1f}x")
+    if t2 > 0:
+        print(f"Speedup: {t1/t2:.1f}x")
     print(f"Vectors match: {vector1 == vector2}")
     
     print(f"\nCache stats: {get_cache_stats()}")
     print(f"Dimension: {len(vector1)}")
+    
+    # Cold start target: < 1000ms with background loading
+    if t1 < 1000:
+        print(f"\n✅ Cold start target met: {t1:.0f}ms < 1000ms")
+    else:
+        print(f"\n⚠️ Cold start slow: {t1:.0f}ms (target: <1000ms)")
