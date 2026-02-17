@@ -14,14 +14,14 @@ from pathlib import Path
 
 import numpy as np
 
-# Handle imports for both module and direct execution
 try:
-    from scripts.utils.logger import logger
+    from scripts.logging_config import get_logger
 except ImportError:
     # Fallback if running directly without package structure
     import logging
-    logger = logging.getLogger("memento")
-    logging.basicConfig(level=logging.INFO)
+    def get_logger(name): return logging.getLogger(name)
+
+logger = get_logger("store")
 
 # Default storage path (override with MEMORY_DB_PATH env var)
 DEFAULT_DB_PATH = os.environ.get('MEMORY_DB_PATH', os.path.expanduser("~/.memento/memory.db"))
