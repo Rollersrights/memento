@@ -1,101 +1,71 @@
 # Memento
 
-Persistent semantic memory for AI agents using local SQLite + NumPy. No cloud required, no AVX2 needed, runs on anything.
+**Persistent semantic memory for AI agents.** Local, fast, and privacy-focused.
 
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## Features
 
-- **Pure Python + NumPy** — No GPU required, runs on older hardware
-- **SQLite Backend** — Single file database, easy to backup/transfer
-- **Semantic Search** — MiniLM embeddings for concept matching
-- **Hybrid Search** — BM25 + Vector combination for best of both worlds
-- **Auto-Store** — Intelligent significance detection stores what matters
-- **Document Ingestion** — Drop PDFs, markdown, code files for automatic indexing
-- **Real-time Dashboard** — Live CLI monitoring
-- **Monthly Compaction** — Auto-summarizes old memories to save space
+- **🚀 Blazing Fast:** 0.03ms search via hybrid RAM/SQLite caching.
+- **💾 Persistent:** Memories and cache survive restarts.
+- **⚡ Hardware Accelerated:** Auto-uses AVX2/ONNX Runtime if available.
+- **🧠 Semantic:** "Buy food" matches "Get groceries".
+- **🖥️ CLI:** Rich terminal interface for human interaction.
+- **☁️ Local First:** No API keys, no cloud dependencies.
 
 ## Quick Start
 
 ```bash
-pip install sentence-transformers numpy
-
-python3 -c "
-from scripts.store import MemoryStore
-memory = MemoryStore()
+# Install
+git clone https://github.com/rollersrights/memento.git
+cd memento
+pip install -r requirements.txt
 
 # Store a memory
-memory.remember('Remember to buy milk', importance=0.7, tags=['todo'])
+./memento remember "The server IP is 192.168.1.155" --tags "infra"
 
-# Search memories
-results = memory.recall('shopping')
-for r in results:
-    print(f'{r[\"score\"]:.3f}: {r[\"text\"]}')
-"
+# Recall it
+./memento recall "where is the server?"
 ```
 
-## Storage
+## The CLI
 
-Default location: `~/.memento/memory.db`
+Memento detects if you're a human or a script.
 
-Override with environment variable:
-```bash
-export MEMORY_DB_PATH=/custom/path/memory.db
+**Human Mode (Rich Tables):**
+```text
+ID        Score   Text
+──────────────────────────────────────────
+a1b2c3d4  0.89    The server IP is...
 ```
 
-## Collections
-
-- `conversations` — Chat history (auto-stored)
-- `documents` — Ingested files
-- `knowledge` — Explicit facts and todos
-- `compacted` — Summarized old memories
-
-## Document Ingestion
-
-Drop files in `~/.memento/inbox/`:
-- PDFs, Markdown, Text files
-- Code files (.py, .js, .go, etc.)
-- Auto-processed every 5 minutes
-
-## Dashboard
-
+**Script Mode (JSON):**
 ```bash
-# Live monitoring
-python3 scripts/dashboard.py
-
-# One-time snapshot
-python3 scripts/dashboard.py --once
+./memento recall "server" | jq .[0].text
+# "The server IP is 192.168.1.155"
 ```
 
 ## Architecture
 
 ```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│   Agent     │────▶│   Memento   │────▶│   SQLite    │
-│   Chat      │     │   Store     │     │   Database  │
-└─────────────┘     └──────┬──────┘     └─────────────┘
-                           │
-                    ┌──────┴──────┐
-                    │   NumPy     │
-                    │   Vectors   │
-                    └─────────────┘
+┌──────────┐    ┌─────────────┐    ┌──────────────┐
+│  Query   │───▶│  RAM Cache  │───▶│  Disk Cache  │
+└──────────┘    │  (0.03ms)   │    │   (SQLite)   │
+                └──────┬──────┘    └──────┬───────┘
+                       │ (miss)           │ (miss)
+                ┌──────▼──────┐           │
+                │ ONNX/PyTorch│◀──────────┘
+                │  Inference  │
+                └─────────────┘
 ```
 
-## Performance
+## Development
 
-- Typical query: <50ms for thousands of memories
-- Embedding: ~100-500 docs/sec (batch)
-- Memory: ~1.5KB per vector (384-dim float32)
-
-## Cron Jobs (Optional)
-
-| Job | Frequency | Purpose |
-|-----|-----------|---------|
-| session-watcher | Every 3 min | Auto-store significant exchanges |
-| document-processor | Every 5 min | Process inbox files |
-| daily-backup | Daily | Backup database |
-| monthly-compaction | Monthly | Summarize old memories |
+Run the test suite:
+```bash
+./run_tests.sh
+```
 
 ## License
 
