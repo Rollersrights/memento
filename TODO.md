@@ -4,9 +4,9 @@
 |--------|-------------|--------|----------|-------|
 | #12 | Add type hints to `store.py` | [x] | @Bob | MemoryStore class |
 | #13 | Add type hints to `embed.py` | [x] | @Bob | Done! |
-| #14 | Add type hints to `cli.py` | [ ] | | All CLI functions |
-| #15 | Add type hints to `search.py` | [ ] | | Search functions |
-| #16 | Create `scripts/types.py` | [ ] | | Shared type definitions |
+| #14 | Add type hints to `cli.py` | [x] | @Bob | All CLI functions |
+| #15 | Add type hints to `search.py` | [x] | @Bob | Search functions |
+| #16 | Create `scripts/types.py` | [x] | @Bob | Shared type definitions |
 | #17 | Fix bare `except:` clauses | [x] | @Bob | Fixed in core & dashboard |
 | #18 | Create `MementoError` class | [x] | @Rita | scripts/exceptions.py |
 

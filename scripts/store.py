@@ -18,6 +18,8 @@ try:
     from scripts.logging_config import get_logger
     from scripts.config import get_config
     from scripts.migrations import run_migrations
+    from scripts.exceptions import StorageError, ValidationError
+    from scripts.types import Memory, SearchResult
 except ImportError:
     # Fallback if running directly without package structure
     import logging
@@ -28,6 +30,10 @@ except ImportError:
         storage = Storage()
     def get_config(): return MockConfig()
     def run_migrations(conn): pass
+    class StorageError(Exception): pass
+    class ValidationError(Exception): pass
+    class Memory: pass
+    class SearchResult: pass
 
 logger = get_logger("store")
 config = get_config()
@@ -162,7 +168,20 @@ class MemoryStore:
         
         Returns:
             Document ID (existing or new)
+        
+        Raises:
+            ValidationError: If input is invalid
         """
+        # Validate inputs
+        if not text or not text.strip():
+            raise ValidationError("Memory text cannot be empty")
+            
+        if len(text) > 100000:
+            raise ValidationError(f"Memory text too long ({len(text)} > 100000 chars)")
+            
+        if tags and len(tags) > 50:
+             raise ValidationError(f"Too many tags ({len(tags)} > 50)")
+
         # Handle imports for both module and direct execution
         try:
             from scripts.embed import embed
@@ -255,7 +274,16 @@ class MemoryStore:
         
         Returns:
             List of result dicts with id, text, score, metadata
+        
+        Raises:
+            ValidationError: If query is invalid
         """
+        if not query or not query.strip():
+            return []
+            
+        if len(query) > 1000:
+             raise ValidationError(f"Query too long ({len(query)} > 1000 chars)")
+        
         # Handle imports for both module and direct execution
         try:
             from scripts.embed import embed

@@ -8,8 +8,9 @@ import sqlite3
 import numpy as np
 from typing import List, Dict, Any, Optional
 from datetime import datetime
+from scripts.store import MemoryStore
 
-def init_fts5(conn: sqlite3.Connection):
+def init_fts5(conn: sqlite3.Connection) -> None:
     """Initialize FTS5 full-text search on memories table."""
     try:
         # Check if FTS5 table exists
@@ -84,7 +85,7 @@ def bm25_search(
         return []
 
 def vector_search(
-    store,
+    store: MemoryStore,
     query: str,
     filters: Optional[Dict[str, Any]] = None,
     topk: int = 20
@@ -97,7 +98,7 @@ def vector_search(
     return results
 
 def hybrid_bm25_vector_search(
-    store,
+    store: MemoryStore,
     query: str,
     filters: Optional[Dict[str, Any]] = None,
     topk: int = 5,
@@ -169,7 +170,7 @@ def hybrid_bm25_vector_search(
     return combined[:topk]
 
 def hybrid_search(
-    store,
+    store: MemoryStore,
     query: str,
     filters: Optional[Dict[str, Any]] = None,
     topk: int = 5,
@@ -249,7 +250,7 @@ def _rerank_results(results: List[Dict[str, Any]], score_key: str = 'score') -> 
     return results
 
 def find_similar(
-    store,
+    store: MemoryStore,
     text: str,
     exclude_id: Optional[str] = None,
     topk: int = 3
@@ -266,7 +267,7 @@ def find_similar(
     return results[:topk]
 
 def search_by_tag(
-    store,
+    store: MemoryStore,
     tags: List[str],
     topk: int = 10
 ) -> List[Dict[str, Any]]:

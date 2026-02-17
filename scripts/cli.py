@@ -91,7 +91,7 @@ def print_results(results: List[dict], output_format: str = 'table'):
             if len(text) > 50: text = text[:47] + "..."
             print(f"{r['id'][:8]:<10} {r['score']:.3f}    {text}")
 
-def cmd_remember(args):
+def cmd_remember(args: argparse.Namespace) -> None:
     """Store a memory."""
     store = MemoryStore()
     text = " ".join(args.text)
@@ -110,13 +110,13 @@ def cmd_remember(args):
         tags=args.tags.split(',') if args.tags else []
     )
     
-    if HAS_RICH:
+    if HAS_RICH and CONSOLE:
         CONSOLE.print(f"[bold green]✓ Remembered:[/bold green] [dim]{doc_id}[/dim]")
         CONSOLE.print(f"  \"{text[:100]}{'...' if len(text)>100 else ''}\"")
     else:
         print(f"Stored: {doc_id}")
 
-def cmd_recall(args):
+def cmd_recall(args: argparse.Namespace) -> None:
     """Search memories."""
     store = MemoryStore()
     query = " ".join(args.query)
@@ -129,11 +129,11 @@ def cmd_recall(args):
     
     print_results(results, args.format)
 
-def cmd_delete(args):
+def cmd_delete(args: argparse.Namespace) -> None:
     """Delete a memory."""
     store = MemoryStore()
     if store.delete(args.id):
-        if HAS_RICH:
+        if HAS_RICH and CONSOLE:
             CONSOLE.print(f"[bold red]🗑️ Deleted:[/bold red] {args.id}")
         else:
             print(f"Deleted {args.id}")
@@ -141,7 +141,7 @@ def cmd_delete(args):
         print(f"Error: Could not delete {args.id}")
         sys.exit(1)
 
-def cmd_stats(args):
+def cmd_stats(args: argparse.Namespace) -> None:
     """Show statistics."""
     store = MemoryStore()
     stats = store.stats()
@@ -154,7 +154,7 @@ def cmd_stats(args):
         print(json.dumps(stats, indent=2))
         return
 
-    if HAS_RICH:
+    if HAS_RICH and CONSOLE:
         grid = Table.grid(padding=1)
         grid.add_column(style="bold cyan", justify="right")
         grid.add_column(style="white")
@@ -169,7 +169,7 @@ def cmd_stats(args):
         c_grid.add_column(style="bold yellow", justify="right")
         c_grid.add_column(style="white")
         
-        c_grid.add_row("Backend:", cache_stats['embedder'].upper())
+        c_grid.add_row("Backend:", str(cache_stats['embedder']).upper())
         c_grid.add_row("RAM Hits:", str(cache_stats['lru_hits']))
         c_grid.add_row("Disk Hits:", str(cache_stats['disk_hits']))
         c_grid.add_row("Computes:", str(cache_stats['misses']))
@@ -181,7 +181,7 @@ def cmd_stats(args):
         print(f"Path: {stats['db_path']}")
         print(f"Cache: {cache_stats}")
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Memento - Semantic Memory CLI")
     subparsers = parser.add_subparsers(dest="command", help="Command")
     
