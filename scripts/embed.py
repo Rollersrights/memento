@@ -20,6 +20,7 @@ _model = None
 _tokenizer = None
 _onnx_session = None
 _embedder_type = None  # 'onnx' or 'pytorch'
+_onnx_tokenizer = None  # Cached tokenizer for ONNX path
 
 # Cache stats
 _cache_hits = 0
@@ -27,7 +28,7 @@ _cache_misses = 0
 _disk_hits = 0
 
 class PersistentCache:
-    """SQLite-backed persistent cache for embeddings."""
+    """SQLite-backed persistent cache for embeddings (binary blob storage)."""
     def __init__(self) -> None:
         self.db_path = os.path.expanduser("~/.memento/cache.db")
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
@@ -35,17 +36,60 @@ class PersistentCache:
         
     def _init_db(self) -> None:
         with sqlite3.connect(self.db_path) as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS embeddings (
-                    hash TEXT PRIMARY KEY,
-                    vector TEXT,
-                    last_accessed REAL
-                )
-            """)
+            # Check if we need to migrate from JSON text to binary blob
+            cursor = conn.execute("SELECT sql FROM sqlite_master WHERE name='embeddings'")
+            row = cursor.fetchone()
+            if row and 'vector TEXT' in row[0]:
+                # Migrate: rename old table, create new, copy data
+                try:
+                    conn.execute("ALTER TABLE embeddings RENAME TO embeddings_old")
+                    conn.execute("""
+                        CREATE TABLE embeddings (
+                            hash TEXT PRIMARY KEY,
+                            vector BLOB,
+                            last_accessed REAL
+                        )
+                    """)
+                    # Migrate existing data from JSON text to binary blob
+                    cursor = conn.execute("SELECT hash, vector, last_accessed FROM embeddings_old")
+                    import numpy as np
+                    for r in cursor.fetchall():
+                        try:
+                            vec = json.loads(r[1])
+                            blob = np.array(vec, dtype=np.float32).tobytes()
+                            conn.execute(
+                                "INSERT INTO embeddings (hash, vector, last_accessed) VALUES (?, ?, ?)",
+                                (r[0], blob, r[2])
+                            )
+                        except Exception:
+                            pass  # Skip corrupt entries
+                    conn.execute("DROP TABLE embeddings_old")
+                    conn.commit()
+                except Exception:
+                    # If migration fails, just recreate
+                    conn.execute("DROP TABLE IF EXISTS embeddings_old")
+                    conn.execute("DROP TABLE IF EXISTS embeddings")
+                    conn.execute("""
+                        CREATE TABLE embeddings (
+                            hash TEXT PRIMARY KEY,
+                            vector BLOB,
+                            last_accessed REAL
+                        )
+                    """)
+                    conn.commit()
+            elif row is None:
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS embeddings (
+                        hash TEXT PRIMARY KEY,
+                        vector BLOB,
+                        last_accessed REAL
+                    )
+                """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_access ON embeddings(last_accessed)")
             
     def get(self, text_hash: str) -> Union[Tuple[float, ...], None]:
         try:
+            import numpy as np
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.execute(
                     "SELECT vector FROM embeddings WHERE hash = ?", 
@@ -53,22 +97,23 @@ class PersistentCache:
                 )
                 row = cursor.fetchone()
                 if row:
-                    # Update access time async/fire-and-forget ideally, but synchronous is safer for SQLite
                     conn.execute(
                         "UPDATE embeddings SET last_accessed = ? WHERE hash = ?",
                         (time.time(), text_hash)
                     )
-                    return tuple(json.loads(row[0]))
+                    return tuple(np.frombuffer(row[0], dtype=np.float32))
         except Exception as e:
             print(f"Cache read error: {e}")
         return None
 
     def set(self, text_hash: str, vector: Tuple[float, ...]) -> None:
         try:
+            import numpy as np
+            blob = np.array(vector, dtype=np.float32).tobytes()
             with sqlite3.connect(self.db_path) as conn:
                 conn.execute(
                     "INSERT OR REPLACE INTO embeddings (hash, vector, last_accessed) VALUES (?, ?, ?)",
-                    (text_hash, json.dumps(vector), time.time())
+                    (text_hash, blob, time.time())
                 )
         except Exception as e:
             print(f"Cache write error: {e}")
@@ -224,18 +269,29 @@ def _load_onnx_model():
         _embedder_type = 'pytorch'
         return None
 
+def _get_onnx_tokenizer():
+    """Get or load cached ONNX tokenizer."""
+    global _onnx_tokenizer
+    if _onnx_tokenizer is None:
+        from transformers import AutoTokenizer
+        cache_dir = os.path.expanduser("~/.memento/models")
+        _onnx_tokenizer = AutoTokenizer.from_pretrained(
+            "sentence-transformers/all-MiniLM-L6-v2",
+            cache_dir=cache_dir
+        )
+    return _onnx_tokenizer
+
 def _embed_onnx(texts: List[str]) -> List[List[float]]:
     """Embed using ONNX Runtime."""
     import numpy as np
-    from transformers import AutoTokenizer
     
     session = _load_onnx_model()
     if session is None:
         # Fallback to PyTorch
         return _embed_pytorch(texts)
     
-    # Load tokenizer (same as model)
-    tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
+    # Load tokenizer (cached after first call)
+    tokenizer = _get_onnx_tokenizer()
     
     # Tokenize
     inputs = tokenizer(
@@ -283,8 +339,8 @@ def _embed_pytorch(texts: List[str]) -> List[List[float]]:
     return [r.tolist() for r in results]
 
 def _get_cache_key(text: str) -> str:
-    """Generate cache key for text (hash-based)."""
-    return hashlib.md5(text.encode('utf-8')).hexdigest()
+    """Generate cache key for text (blake2b — fast, collision-resistant)."""
+    return hashlib.blake2b(text.encode('utf-8'), digest_size=16).hexdigest()
 
 # LRU cache for single text embeddings (max 1000 entries) - RAM Layer
 @lru_cache(maxsize=1000)
