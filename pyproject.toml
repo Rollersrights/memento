@@ -1,0 +1,76 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "memento-memory"
+version = "0.2.0"
+description = "Persistent semantic memory for AI agents"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Rita", email = "rita@local"},
+    {name = "Bob", email = "bob@local"},
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Database",
+]
+requires-python = ">=3.8"
+dependencies = [
+    "sentence-transformers>=2.0.0",
+    "numpy>=1.20.0",
+    "py-cpuinfo>=9.0.0",
+]
+
+[project.optional-dependencies]
+fast = [
+    "hnswlib>=0.8.0",
+    "faiss-cpu>=1.7.0",
+    "onnxruntime>=1.15.0",
+]
+dev = [
+    "pytest>=7.0.0",
+    "flake8>=5.0.0",
+    "black>=22.0.0",
+    "rich>=13.0.0",
+]
+
+[project.scripts]
+memento = "scripts.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/rollersrights/memento"
+Repository = "https://github.com/rollersrights/memento"
+Issues = "https://github.com/rollersrights/memento/issues"
+
+[tool.setuptools]
+py-modules = []
+
+[tool.black]
+line-length = 100
+target-version = ['py38', 'py39', 'py310', 'py311', 'py312']
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.git
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
