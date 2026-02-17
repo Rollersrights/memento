@@ -1,115 +1,80 @@
 #!/usr/bin/env python3
 """
-Embedding wrapper for all-MiniLM-L6-v2
+Embedding wrapper for all-MiniLM-L6-v2 - ONNX Runtime only
 Lightweight, local, no API calls
-With LRU caching, Persistent Disk Cache (SQLite), AVX2/ONNX optimization,
-and BACKGROUND LOADING for fast cold start.
 """
 
 import os
 import sys
 import hashlib
 import sqlite3
-import json
 import time
 import threading
 from functools import lru_cache
-from typing import List, Union, Tuple, Optional
+from typing import List, Union, Tuple
 from pathlib import Path
 
-# Background loading support
+import numpy as np
+
+# Module-level cache
 _model_loading_thread = None
 _model_ready_event = threading.Event()
 _model_loading_started = False
 _model_loading_lock = threading.Lock()
-
-# Cache model at module level for reuse
-_model = None
-_tokenizer = None
 _onnx_session = None
-_embedder_type = None  # 'onnx' or 'pytorch'
-_onnx_tokenizer = None  # Cached tokenizer for ONNX path
+_onnx_tokenizer = None
 
 # Cache stats
 _cache_hits = 0
 _cache_misses = 0
 _disk_hits = 0
 
-# Idle timeout support - Issue #19
+# Idle timeout support
 _idle_timer = None
-_idle_timeout_seconds = None  # None = no timeout
+_idle_timeout_seconds = None
 _last_activity_time = None
 _idle_lock = threading.Lock()
 
-# ============================================================================
-# BACKGROUND MODEL LOADING - Fixes cold start issue #13
-# ============================================================================
 
 def _load_model_background():
-    """Load model in background thread to hide cold start latency."""
-    global _model, _onnx_session, _embedder_type
-    
+    """Load model in background thread."""
+    global _onnx_session
     try:
-        # Detect best embedder type
-        embedder = _get_embedder_type()
-        
-        if embedder == 'onnx':
-            # Pre-load ONNX model
-            _load_onnx_model()
-        else:
-            # Pre-load PyTorch model
-            from sentence_transformers import SentenceTransformer
-            cache_dir = os.path.expanduser("~/.openclaw/memento/models")
-            os.makedirs(cache_dir, exist_ok=True)
-            _model = SentenceTransformer(
-                "sentence-transformers/all-MiniLM-L6-v2",
-                cache_folder=cache_dir
-            )
-        
-        # Signal that model is ready
+        _load_onnx_model()
         _model_ready_event.set()
-        
     except Exception as e:
         print(f"[Embed] Background loading failed: {e}", file=sys.stderr)
-        # Still signal ready to prevent blocking forever
         _model_ready_event.set()
 
+
 def _start_background_loading():
-    """Start background model loading thread (call once on import)."""
+    """Start background model loading."""
     global _model_loading_thread, _model_loading_started
-    
     with _model_loading_lock:
         if _model_loading_started:
             return
         _model_loading_started = True
-        
         _model_loading_thread = threading.Thread(target=_load_model_background, daemon=True)
         _model_loading_thread.start()
 
+
 def is_model_ready() -> bool:
-    """Check if model has finished loading in background."""
+    """Check if model has finished loading."""
     return _model_ready_event.is_set()
 
+
 def wait_for_model(timeout: float = 30.0) -> bool:
-    """Wait for model to be ready. Returns True if ready, False on timeout."""
+    """Wait for model to be ready."""
     return _model_ready_event.wait(timeout)
 
-# ============================================================================
-# IDLE TIMEOUT & MEMORY MANAGEMENT - Issue #19
-# ============================================================================
 
 def _reset_idle_timer():
     """Reset idle timer on model activity."""
     global _idle_timer, _last_activity_time
-    
     with _idle_lock:
         _last_activity_time = time.time()
-        
-        # Cancel existing timer
         if _idle_timer is not None:
             _idle_timer.cancel()
-        
-        # Start new timer if timeout is set
         if _idle_timeout_seconds is not None and _idle_timeout_seconds > 0:
             _idle_timer = threading.Timer(_idle_timeout_seconds, unload_model)
             _idle_timer.daemon = True
@@ -117,21 +82,10 @@ def _reset_idle_timer():
 
 
 def set_idle_timeout(minutes: float) -> None:
-    """
-    Set idle timeout for automatic model unloading.
-    
-    Args:
-        minutes: Minutes of inactivity before unloading (0 or None = no timeout)
-    
-    Example:
-        set_idle_timeout(30)  # Unload after 30 minutes idle
-        set_idle_timeout(0)   # Disable auto-unload
-    """
+    """Set idle timeout for automatic model unloading."""
     global _idle_timeout_seconds
-    
     if minutes is None or minutes <= 0:
         _idle_timeout_seconds = None
-        # Cancel any existing timer
         with _idle_lock:
             if _idle_timer is not None:
                 _idle_timer.cancel()
@@ -142,100 +96,38 @@ def set_idle_timeout(minutes: float) -> None:
 
 
 def unload_model(force: bool = False) -> bool:
-    """
-    Free model from RAM to save memory.
-    
-    The model will be automatically reloaded on the next embed() call.
-    Use this for memory-constrained environments or long-running processes.
-    
-    Args:
-        force: If True, unload even if busy (use with caution)
-    
-    Returns:
-        True if model was unloaded, False if already unloaded
-    
-    Example:
-        >>> embed("test")  # Model loads (~80MB)
-        >>> unload_model()  # Free RAM
-        >>> embed("test")  # Model reloads transparently
-    """
-    global _model, _onnx_session, _embedder_type
-    global _model_loading_started, _model_ready_event
-    global _model_loading_thread
-    
-    # Check if model is actually loaded
-    if _model is None and (_onnx_session is None or _onnx_session == 'available'):
+    """Free model from RAM."""
+    global _onnx_session, _model_loading_started, _model_ready_event, _model_loading_thread
+    if _onnx_session is None:
         return False
-    
-    # Cancel any idle timer
     with _idle_lock:
-        global _idle_timer
         if _idle_timer is not None:
             _idle_timer.cancel()
             _idle_timer = None
-    
-    # Clear model references
-    _model = None
     _onnx_session = None
-    _embedder_type = None
-    
-    # Reset loading state so model can be reloaded
     _model_loading_started = False
     _model_ready_event.clear()
     _model_loading_thread = None
-    
-    # Force garbage collection to free RAM immediately
     import gc
     gc.collect()
-    
     return True
 
 
 def get_memory_usage() -> dict:
-    """
-    Get current memory usage statistics.
-    
-    Returns:
-        Dict with memory info including:
-        - model_loaded: Whether model is in RAM
-        - embedder_type: 'onnx', 'pytorch', or None
-        - estimated_mb: Estimated RAM usage (approximate)
-        - idle_timeout_min: Current idle timeout setting
-        - seconds_idle: Seconds since last activity (if timeout enabled)
-    
-    Example:
-        >>> get_memory_usage()
-        {'model_loaded': True, 'embedder_type': 'onnx', 'estimated_mb': 85}
-    """
-    result = {
-        'model_loaded': False,
-        'embedder_type': None,
-        'estimated_mb': 0,
-        'idle_timeout_min': None,
-        'seconds_idle': None
-    }
-    
-    # Check if model is loaded
-    if _model is not None:
+    """Get current memory usage statistics."""
+    result = {'model_loaded': False, 'estimated_mb': 0, 'idle_timeout_min': None, 'seconds_idle': None}
+    if _onnx_session is not None:
         result['model_loaded'] = True
-        result['embedder_type'] = 'pytorch'
-        result['estimated_mb'] = 80  # Approximate for MiniLM
-    elif _onnx_session is not None and _onnx_session != 'available':
-        result['model_loaded'] = True
-        result['embedder_type'] = 'onnx'
-        result['estimated_mb'] = 85  # ONNX uses slightly more RAM
-    
-    # Idle timeout info
+        result['estimated_mb'] = 85
     if _idle_timeout_seconds is not None:
         result['idle_timeout_min'] = _idle_timeout_seconds / 60
         if _last_activity_time is not None:
             result['seconds_idle'] = time.time() - _last_activity_time
-    
     return result
 
 
 class PersistentCache:
-    """SQLite-backed persistent cache for embeddings (binary blob storage)."""
+    """SQLite-backed persistent cache for embeddings."""
     def __init__(self) -> None:
         self.db_path = os.path.expanduser("~/.openclaw/memento/cache.db")
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
@@ -243,71 +135,23 @@ class PersistentCache:
         
     def _init_db(self) -> None:
         with sqlite3.connect(self.db_path) as conn:
-            # Check if we need to migrate from JSON text to binary blob
-            cursor = conn.execute("SELECT sql FROM sqlite_master WHERE name='embeddings'")
-            row = cursor.fetchone()
-            if row and 'vector TEXT' in row[0]:
-                # Migrate: rename old table, create new, copy data
-                try:
-                    conn.execute("ALTER TABLE embeddings RENAME TO embeddings_old")
-                    conn.execute("""
-                        CREATE TABLE embeddings (
-                            hash TEXT PRIMARY KEY,
-                            vector BLOB,
-                            last_accessed REAL
-                        )
-                    """)
-                    # Migrate existing data from JSON text to binary blob
-                    cursor = conn.execute("SELECT hash, vector, last_accessed FROM embeddings_old")
-                    import numpy as np
-                    for r in cursor.fetchall():
-                        try:
-                            vec = json.loads(r[1])
-                            blob = np.array(vec, dtype=np.float32).tobytes()
-                            conn.execute(
-                                "INSERT INTO embeddings (hash, vector, last_accessed) VALUES (?, ?, ?)",
-                                (r[0], blob, r[2])
-                            )
-                        except Exception:
-                            pass  # Skip corrupt entries
-                    conn.execute("DROP TABLE embeddings_old")
-                    conn.commit()
-                except Exception:
-                    # If migration fails, just recreate
-                    conn.execute("DROP TABLE IF EXISTS embeddings_old")
-                    conn.execute("DROP TABLE IF EXISTS embeddings")
-                    conn.execute("""
-                        CREATE TABLE embeddings (
-                            hash TEXT PRIMARY KEY,
-                            vector BLOB,
-                            last_accessed REAL
-                        )
-                    """)
-                    conn.commit()
-            elif row is None:
-                conn.execute("""
-                    CREATE TABLE IF NOT EXISTS embeddings (
-                        hash TEXT PRIMARY KEY,
-                        vector BLOB,
-                        last_accessed REAL
-                    )
-                """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS embeddings (
+                    hash TEXT PRIMARY KEY,
+                    vector BLOB,
+                    last_accessed REAL
+                )
+            """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_access ON embeddings(last_accessed)")
             
     def get(self, text_hash: str) -> Union[Tuple[float, ...], None]:
         try:
-            import numpy as np
             with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.execute(
-                    "SELECT vector FROM embeddings WHERE hash = ?", 
-                    (text_hash,)
-                )
+                cursor = conn.execute("SELECT vector FROM embeddings WHERE hash = ?", (text_hash,))
                 row = cursor.fetchone()
                 if row:
-                    conn.execute(
-                        "UPDATE embeddings SET last_accessed = ? WHERE hash = ?",
-                        (time.time(), text_hash)
-                    )
+                    conn.execute("UPDATE embeddings SET last_accessed = ? WHERE hash = ?",
+                                (time.time(), text_hash))
                     return tuple(np.frombuffer(row[0], dtype=np.float32))
         except Exception as e:
             print(f"Cache read error: {e}")
@@ -315,264 +159,101 @@ class PersistentCache:
 
     def set(self, text_hash: str, vector: Tuple[float, ...]) -> None:
         try:
-            import numpy as np
             blob = np.array(vector, dtype=np.float32).tobytes()
             with sqlite3.connect(self.db_path) as conn:
-                conn.execute(
-                    "INSERT OR REPLACE INTO embeddings (hash, vector, last_accessed) VALUES (?, ?, ?)",
-                    (text_hash, blob, time.time())
-                )
+                conn.execute("INSERT OR REPLACE INTO embeddings (hash, vector, last_accessed) VALUES (?, ?, ?)",
+                            (text_hash, blob, time.time()))
         except Exception as e:
             print(f"Cache write error: {e}")
-    
-    def get_cache_key(self, text: str) -> str:
-        """Generate cache key for text (convenience method)."""
-        return _get_cache_key(text)
 
-# Global disk cache instance
+
 _disk_cache = PersistentCache()
 
-def _has_avx2() -> bool:
-    """Detect AVX2 support at runtime."""
-    try:
-        # Method 1: Check CPU flags via /proc/cpuinfo (Linux)
-        if os.path.exists('/proc/cpuinfo'):
-            with open('/proc/cpuinfo', 'r') as f:
-                cpuinfo = f.read()
-                if 'avx2' in cpuinfo.lower():
-                    return True
-        
-        # Method 2: Try cpuinfo library if available
-        try:
-            import cpuinfo
-            info = cpuinfo.get_cpu_info()
-            flags = info.get('flags', []) if info else []
-            if isinstance(flags, list):
-                return 'avx2' in [f.lower() for f in flags]
-            elif isinstance(flags, str):
-                return 'avx2' in flags.lower()
-        except ImportError:
-            pass
-        except Exception:
-            pass
-        
-        # Method 3: Try to execute AVX2 instruction (dangerous, skip for safety)
-        return False
-    except Exception:
-        return False
-
-# ============================================================================
-# EMBEDDER DETECTION AT IMPORT TIME - Fix cold start issue
-# ============================================================================
-
-def _detect_best_embedder() -> str:
-    """Detect best embedder at import time, before any loading starts."""
-    # Check for AVX2 first
-    if not _has_avx2():
-        return 'pytorch'
-    
-    # Check if ONNX model exists
-    onnx_path = Path.home() / ".memento" / "models" / "all-MiniLM-L6-v2.onnx"
-    if not onnx_path.exists():
-        return 'pytorch'
-    
-    # Check if onnxruntime is available
-    try:
-        import onnxruntime as ort
-        # Quick test that it works
-        _ = ort.SessionOptions()
-        return 'onnx'
-    except ImportError:
-        return 'pytorch'
-    except Exception:
-        return 'pytorch'
-
-# Detect embedder type ONCE at import time
-_preferred_embedder = _detect_best_embedder()
-if _preferred_embedder == 'onnx':
-    _embedder_type = 'onnx'
-    _onnx_session = 'available'  # Mark for lazy loading
-    print("[Embed] ONNX Runtime detected and will be used for fast inference")
-
-def _try_onnx() -> bool:
-    """Try to load ONNX Runtime with the optimized model."""
-    global _onnx_session
-    
-    try:
-        import onnxruntime as ort
-        
-        # Check ONNX Runtime has AVX2 support
-        sess_options = ort.SessionOptions()
-        
-        # Try to create a test session to verify it works
-        # We'll create the actual session later when we have the model path
-        _onnx_session = 'available'  # Mark as available, load model on first use
-        return True
-        
-    except ImportError:
-        return False
-    except Exception as e:
-        print(f"[Embed] ONNX Runtime available but failed: {e}", file=sys.stderr)
-        return False
-
-def _get_embedder_type() -> str:
-    """Determine best embedder for this hardware."""
-    global _embedder_type
-    
-    if _embedder_type is not None:
-        # print(f"DEBUG: Using cached embedder type: {_embedder_type}")
-        return _embedder_type
-    
-    # Default to PyTorch (always works)
-    _embedder_type = 'pytorch'
-    
-    # Check for AVX2
-    has_avx2 = _has_avx2()
-    # print(f"DEBUG: Has AVX2: {has_avx2}")
-    
-    if has_avx2:
-        # Only print once
-        # print("[Embed] AVX2 detected, trying ONNX Runtime...")
-        if _try_onnx():
-            _embedder_type = 'onnx'
-            # print("[Embed] Using ONNX Runtime (fast)")
-        else:
-            # print("[Embed] ONNX not available, using PyTorch (compatible)")
-            pass
-    
-    # print(f"DEBUG: Final embedder type: {_embedder_type}")
-    return _embedder_type
 
 def _load_onnx_model():
     """Load or convert model to ONNX format."""
     global _onnx_session
-    
-    if _onnx_session is not None and _onnx_session != 'available':
+    if _onnx_session is not None:
         return _onnx_session
     
     import onnxruntime as ort
     from pathlib import Path
+    from transformers import AutoTokenizer, AutoModel
+    import torch
     
     cache_dir = Path.home() / ".memento" / "models"
     onnx_path = cache_dir / "all-MiniLM-L6-v2.onnx"
     
-    # Check if ONNX model already exists
     if onnx_path.exists():
         sess_options = ort.SessionOptions()
         sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         _onnx_session = ort.InferenceSession(str(onnx_path), sess_options)
         return _onnx_session
     
-    # Need to convert from PyTorch to ONNX
     print("[Embed] Converting model to ONNX (one-time)...")
+    cache_dir.mkdir(parents=True, exist_ok=True)
     
-    try:
-        from sentence_transformers import SentenceTransformer
-        import torch
-        
-        # Load PyTorch model
-        model = SentenceTransformer(
-            "sentence-transformers/all-MiniLM-L6-v2",
-            cache_folder=str(cache_dir)
-        )
-        
-        # Export to ONNX
-        dummy_input = "This is a test sentence."
-        dummy_tokens = model.tokenize([dummy_input])
-        
-        # Get actual input names and shapes
-        input_ids = dummy_tokens['input_ids']
-        attention_mask = dummy_tokens['attention_mask']
-        
-        # Export
-        torch.onnx.export(
-            model._first_module().auto_model,
-            (input_ids, attention_mask),
-            str(onnx_path),
-            input_names=['input_ids', 'attention_mask'],
-            output_names=['output'],
-            dynamic_axes={
-                'input_ids': {0: 'batch_size', 1: 'sequence'},
-                'attention_mask': {0: 'batch_size', 1: 'sequence'},
-                'output': {0: 'batch_size'}
-            },
-            opset_version=14
-        )
-        
-        # Load the ONNX model
-        sess_options = ort.SessionOptions()
-        sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-        _onnx_session = ort.InferenceSession(str(onnx_path), sess_options)
-        print(f"[Embed] ONNX model saved to {onnx_path}")
-        return _onnx_session
-        
-    except Exception as e:
-        print(f"[Embed] ONNX conversion failed: {e}", file=sys.stderr)
-        print("[Embed] Falling back to PyTorch", file=sys.stderr)
-        global _embedder_type
-        _embedder_type = 'pytorch'
-        return None
+    model = AutoModel.from_pretrained("sentence-transformers/all-MiniLM-L6-v2", cache_dir=str(cache_dir))
+    tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2", cache_dir=str(cache_dir))
+    
+    dummy_input = tokenizer("This is a test sentence.", padding=True, truncation=True, 
+                           max_length=256, return_tensors='pt')
+    
+    torch.onnx.export(
+        model,
+        (dummy_input['input_ids'], dummy_input['attention_mask']),
+        str(onnx_path),
+        input_names=['input_ids', 'attention_mask'],
+        output_names=['output'],
+        dynamic_axes={'input_ids': {0: 'batch_size', 1: 'sequence'},
+                     'attention_mask': {0: 'batch_size', 1: 'sequence'},
+                     'output': {0: 'batch_size'}},
+        opset_version=14
+    )
+    
+    sess_options = ort.SessionOptions()
+    sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+    _onnx_session = ort.InferenceSession(str(onnx_path), sess_options)
+    print(f"[Embed] ONNX model saved to {onnx_path}")
+    return _onnx_session
+
 
 def _get_onnx_tokenizer():
-    """Get or load cached ONNX tokenizer."""
+    """Get or load tokenizer."""
     global _onnx_tokenizer
     if _onnx_tokenizer is None:
         from transformers import AutoTokenizer
         cache_dir = os.path.expanduser("~/.openclaw/memento/models")
         _onnx_tokenizer = AutoTokenizer.from_pretrained(
-            "sentence-transformers/all-MiniLM-L6-v2",
-            cache_dir=cache_dir
-        )
+            "sentence-transformers/all-MiniLM-L6-v2", cache_dir=cache_dir)
     return _onnx_tokenizer
 
 
-# Start background loading now that all helper functions are defined
 _start_background_loading()
 
 
 def _embed_onnx(texts: List[str]) -> List[List[float]]:
     """Embed using ONNX Runtime."""
-    import numpy as np
-    
-    # Reset idle timer on model activity - Issue #19
     _reset_idle_timer()
     
-    # Wait for background loading to complete (fixes cold start issue #13)
     if not _model_ready_event.is_set():
-        print("[Embed] Loading ONNX model (one-time)...", file=sys.stderr, flush=True)
+        print("[Embed] Loading ONNX model...", file=sys.stderr, flush=True)
         if not wait_for_model(timeout=60.0):
-            print("[Embed] ONNX model loading timed out, forcing load...", file=sys.stderr)
+            print("[Embed] Model loading timed out", file=sys.stderr)
     
     session = _load_onnx_model()
-    if session is None:
-        # Fallback to PyTorch
-        return _embed_pytorch(texts)
-    
-    # Load tokenizer (cached after first call)
     tokenizer = _get_onnx_tokenizer()
     
-    # Tokenize
-    inputs = tokenizer(
-        texts,
-        padding=True,
-        truncation=True,
-        max_length=256,
-        return_tensors='np'
-    )
+    inputs = tokenizer(texts, padding=True, truncation=True, max_length=256, return_tensors='np')
     
-    # Run inference - include token_type_ids if model expects it
     ort_inputs = {
         'input_ids': inputs['input_ids'].astype(np.int64),
         'attention_mask': inputs['attention_mask'].astype(np.int64)
     }
     
-    # Some ONNX models expect token_type_ids, some don't
-    if 'token_type_ids' in inputs:
-        ort_inputs['token_type_ids'] = inputs['token_type_ids'].astype(np.int64)
-    
     outputs = session.run(None, ort_inputs)[0]
     
-    # Mean pooling (same as sentence-transformers)
+    # Mean pooling
     attention_mask = inputs['attention_mask']
     input_mask_expanded = np.expand_dims(attention_mask, -1).astype(np.float32)
     sum_embeddings = np.sum(outputs * input_mask_expanded, axis=1)
@@ -584,106 +265,45 @@ def _embed_onnx(texts: List[str]) -> List[List[float]]:
     
     return embeddings.tolist()
 
-def _embed_pytorch(texts: List[str]) -> List[List[float]]:
-    """Embed using PyTorch/SentenceTransformers."""
-    global _model
-    
-    # Reset idle timer on model activity - Issue #19
-    _reset_idle_timer()
-    
-    # Wait for background loading to complete (fixes cold start issue #13)
-    if not _model_ready_event.is_set():
-        print("[Embed] Loading model (one-time)...", file=sys.stderr, flush=True)
-        if not wait_for_model(timeout=60.0):
-            print("[Embed] Model loading timed out, forcing load...", file=sys.stderr)
-    
-    if _model is None:
-        from sentence_transformers import SentenceTransformer
-        cache_dir = os.path.expanduser("~/.openclaw/memento/models")
-        os.makedirs(cache_dir, exist_ok=True)
-        _model = SentenceTransformer(
-            "sentence-transformers/all-MiniLM-L6-v2",
-            cache_folder=cache_dir
-        )
-    
-    results = _model.encode(texts, convert_to_numpy=True)
-    return [r.tolist() for r in results]
 
 def _get_cache_key(text: str) -> str:
-    """Generate cache key for text (blake2b — fast, collision-resistant)."""
+    """Generate cache key for text."""
     return hashlib.blake2b(text.encode('utf-8'), digest_size=16).hexdigest()
 
-# LRU cache for single text embeddings (max 1000 entries) - RAM Layer
+
 @lru_cache(maxsize=1000)
 def _embed_single_cached(text_hash: str, text: str) -> Tuple[float, ...]:
-    """
-    Internal cached embedding function.
-    RAM -> Disk -> Compute (ONNX/PyTorch)
-    """
+    """Internal cached embedding function."""
     global _cache_misses, _disk_hits
     
-    # Check disk cache first (missed RAM if we are here)
     disk_result = _disk_cache.get(text_hash)
     if disk_result:
         _disk_hits += 1
         return disk_result
     
-    # Real miss - compute
     _cache_misses += 1
-    
-    embedder = _get_embedder_type()
-    if embedder == 'onnx':
-        result = _embed_onnx([text])[0]
-    else:
-        result = _embed_pytorch([text])[0]
-    
+    result = _embed_onnx([text])[0]
     vector_tuple = tuple(result)
-    
-    # Save to disk for next time
     _disk_cache.set(text_hash, vector_tuple)
-    
     return vector_tuple
 
+
 def embed(text: Union[str, List[str]], batch_size: int = 32, use_cache: bool = True) -> Union[List[float], List[List[float]]]:
-    """
-    Embed text(s) into 384-dimensional vectors.
-    Automatically uses ONNX Runtime (AVX2) or PyTorch fallback.
-    
-    Args:
-        text: Single string or list of strings
-        batch_size: Batch size for processing (default 32)
-        use_cache: Whether to use LRU cache for single texts (default True)
-    
-    Returns:
-        Single vector (list of 384 floats) or list of vectors
-    """
+    """Embed text(s) into 384-dimensional vectors using ONNX Runtime."""
     global _cache_hits
     
-    # Single text - use cache
     if isinstance(text, str):
         if use_cache:
             cache_key = _get_cache_key(text)
-            
-            # Check RAM cache
             cached_info = _embed_single_cached.cache_info()
             result_tuple = _embed_single_cached(cache_key, text)
-            
-            # If hits count increased, it was in RAM
             if _embed_single_cached.cache_info().hits > cached_info.hits:
                 _cache_hits += 1
-            
             return list(result_tuple)
         else:
-            # Bypass cache (compute directly)
-            embedder = _get_embedder_type()
-            if embedder == 'onnx':
-                return _embed_onnx([text])[0]
-            else:
-                return _embed_pytorch([text])[0]
-    
-    # Batch - check cache for each, embed missing
+            return _embed_onnx([text])[0]
     else:
-        if use_cache and len(text) <= 10:  # Only cache small batches
+        if use_cache and len(text) <= 10:
             results = []
             for t in text:
                 cache_key = _get_cache_key(t)
@@ -691,179 +311,35 @@ def embed(text: Union[str, List[str]], batch_size: int = 32, use_cache: bool = T
                 results.append(list(result_tuple))
             return results
         else:
-            # Large batch - process all at once (faster)
-            embedder = _get_embedder_type()
-            if embedder == 'onnx':
-                return _embed_onnx(text)
-            else:
-                return _embed_pytorch(text)
+            return _embed_onnx(text)
+
 
 def embed_chunks(chunks: List[str], batch_size: int = 32) -> List[List[float]]:
-    """Embed a list of text chunks efficiently."""
+    """Embed a list of text chunks."""
     return embed(chunks, batch_size=batch_size)
 
+
 def get_embedding_dimension() -> int:
-    """Return the embedding dimension (384 for MiniLM-L6-v2)."""
+    """Return the embedding dimension."""
     return 384
 
+
 def get_max_tokens() -> int:
-    """Return max token length (256 for MiniLM-L6-v2)."""
+    """Return max token length."""
     return 256
 
+
 def warmup() -> bool:
-    """
-    Pre-load model to eliminate cold start latency.
-    Call this at system startup or in cron jobs.
-    
-    Returns:
-        True if model is ready, False on timeout
-    """
+    """Pre-load model to eliminate cold start latency."""
     if is_model_ready():
         return True
-    
-    print("[Embed] Warming up model (background loading)...", file=sys.stderr, flush=True)
-    
-    # Wait for background loading to complete
-    if wait_for_model(timeout=60.0):
-        print("[Embed] Model ready!", file=sys.stderr)
-        return True
-    else:
-        print("[Embed] Model loading timed out", file=sys.stderr)
-        return False
+    print("[Embed] Warming up model...", file=sys.stderr, flush=True)
+    return wait_for_model(timeout=60.0)
 
-
-# ============================================================================
-# CACHE WARMING - Issue #20
-# ============================================================================
-
-# Common query patterns for memory systems
-_COMMON_QUERIES = [
-    # Personal context queries
-    "What was I working on?",
-    "What did I do yesterday?",
-    "What are my tasks?",
-    "What did we discuss?",
-    "Summarize my recent work",
-    "What did I learn today?",
-    "What are my priorities?",
-    
-    # Team/Project queries
-    "What did Bob say?",
-    "What is the status of the project?",
-    "What are the open issues?",
-    "What decisions were made?",
-    "What is the next step?",
-    
-    # Technical queries
-    "What is the architecture?",
-    "How does this work?",
-    "What is the error?",
-    "How do I fix this?",
-    "What is the plan?",
-    
-    # Time-based queries
-    "What happened this morning?",
-    "What did we decide last week?",
-    "What changed recently?",
-    "What is new?",
-]
-
-
-def warmup_cache(queries: List[str] = None, include_common: bool = True) -> dict:
-    """
-    Pre-compute embeddings to warm the cache.
-    
-    Call this after model warmup to ensure fast responses for common queries.
-    Useful in cron jobs or startup scripts.
-    
-    Args:
-        queries: Custom list of queries to warm (optional)
-        include_common: Whether to include common query patterns (default True)
-    
-    Returns:
-        Dict with warmup statistics:
-        {
-            'warmed': int,           # Number of queries warmed
-            'time_ms': float,        # Total time in milliseconds
-            'time_per_query_ms': float,  # Average time per query
-            'cache_hits_before': int,
-            'cache_hits_after': int,
-            'queries': List[str]     # List of queries that were warmed
-        }
-    
-    Example:
-        >>> warmup()  # Model warmup first
-        True
-        >>> stats = warmup_cache()  # Warm common queries
-        >>> print(f"Warmed {stats['warmed']} queries in {stats['time_ms']:.0f}ms")
-        Warmed 22 queries in 125ms
-    """
-    # First ensure model is ready
-    if not is_model_ready():
-        if not wait_for_model(timeout=60.0):
-            raise RuntimeError("Model not ready for cache warming")
-    
-    # Build list of queries to warm
-    queries_to_warm = []
-    
-    if include_common:
-        queries_to_warm.extend(_COMMON_QUERIES)
-    
-    if queries:
-        queries_to_warm.extend(queries)
-    
-    # Deduplicate while preserving order
-    seen = set()
-    unique_queries = []
-    for q in queries_to_warm:
-        if q not in seen:
-            seen.add(q)
-            unique_queries.append(q)
-    
-    if not unique_queries:
-        return {
-            'warmed': 0,
-            'time_ms': 0.0,
-            'time_per_query_ms': 0.0,
-            'cache_hits_before': _cache_hits,
-            'cache_hits_after': _cache_hits,
-            'queries': []
-        }
-    
-    # Record cache stats before
-    stats_before = get_cache_stats()
-    
-    # Warm the cache
-    start_time = time.perf_counter()
-    
-    # Use batch embedding for efficiency
-    embed(unique_queries, use_cache=True)
-    
-    elapsed_ms = (time.perf_counter() - start_time) * 1000
-    
-    # Record cache stats after
-    stats_after = get_cache_stats()
-    
-    return {
-        'warmed': len(unique_queries),
-        'time_ms': elapsed_ms,
-        'time_per_query_ms': elapsed_ms / len(unique_queries) if unique_queries else 0.0,
-        'cache_hits_before': stats_before['hits'],
-        'cache_hits_after': stats_after['hits'],
-        'queries': unique_queries
-    }
-
-
-def get_warmup_queries() -> List[str]:
-    """Get the list of default warmup queries."""
-    return _COMMON_QUERIES.copy()
 
 def get_cache_stats() -> dict:
-    """Get cache statistics including memory usage."""
+    """Get cache statistics."""
     cache_info = _embed_single_cached.cache_info()
-    embedder = _get_embedder_type()
-    memory_info = get_memory_usage()
-    
     return {
         'hits': _cache_hits,
         'misses': _cache_misses,
@@ -872,12 +348,12 @@ def get_cache_stats() -> dict:
         'lru_misses': cache_info.misses,
         'maxsize': cache_info.maxsize,
         'currsize': cache_info.currsize,
-        'hit_rate': cache_info.hits / (cache_info.hits + cache_info.misses) * 100 if (cache_info.hits + cache_info.misses) > 0 else 0,
-        'embedder': embedder,
+        'hit_rate': cache_info.hits / (cache_info.hits + cache_info.misses) * 100 
+                    if (cache_info.hits + cache_info.misses) > 0 else 0,
         'model_ready': is_model_ready(),
-        'background_loading': _model_loading_started,
-        'memory': memory_info  # Issue #19: Memory usage stats
+        'memory': get_memory_usage()
     }
+
 
 def clear_cache() -> None:
     """Clear the embedding cache."""
@@ -887,74 +363,22 @@ def clear_cache() -> None:
     _cache_misses = 0
     _disk_hits = 0
 
+
 if __name__ == "__main__":
-    # Test with auto-detect
-    print("Testing embedding with automatic hardware detection...")
-    print(f"Embedder type: {_get_embedder_type()}")
-    print(f"Background loading: {_model_loading_started}")
-    print(f"Model ready: {is_model_ready()}")
-    
+    print("Testing ONNX embedding...")
     test_text = "This is a test sentence for embedding."
     
-    # First call - test cold start with background loading
     import time
     start = time.perf_counter()
     vector1 = embed(test_text)
     t1 = (time.perf_counter() - start) * 1000
-    print(f"\nFirst embed: {t1:.2f}ms (cold start with background loading)")
+    print(f"\nFirst embed: {t1:.2f}ms")
     
-    # Second call - cache hit
     start = time.perf_counter()
     vector2 = embed(test_text)
     t2 = (time.perf_counter() - start) * 1000
     print(f"Second embed: {t2:.2f}ms (cached)")
-    
-    if t2 > 0:
-        print(f"Speedup: {t1/t2:.1f}x")
+    print(f"Speedup: {t1/t2:.1f}x" if t2 > 0 else "N/A")
     print(f"Vectors match: {vector1 == vector2}")
-    
-    print(f"\nCache stats: {get_cache_stats()}")
-    print(f"Dimension: {len(vector1)}")
-    
-    # Cold start target: < 1000ms with background loading
-    if t1 < 1000:
-        print(f"\n✅ Cold start target met: {t1:.0f}ms < 1000ms")
-    else:
-        print(f"\n⚠️ Cold start slow: {t1:.0f}ms (target: <1000ms)")
-    
-    # Issue #19: Test unload_model functionality
-    print("\n" + "="*60)
-    print("Testing unload_model() - Issue #19")
-    print("="*60)
-    
-    mem_before = get_memory_usage()
-    print(f"Memory before unload: {mem_before}")
-    
-    unloaded = unload_model()
-    print(f"unload_model() returned: {unloaded}")
-    
-    mem_after = get_memory_usage()
-    print(f"Memory after unload: {mem_after}")
-    
-    if not mem_after['model_loaded']:
-        print("✅ Model successfully unloaded from RAM")
-    else:
-        print("⚠️ Model still in RAM")
-    
-    # Test transparent reload
-    print("\nTesting transparent reload...")
-    start = time.perf_counter()
-    vector3 = embed(test_text)
-    t3 = (time.perf_counter() - start) * 1000
-    print(f"Embed after unload: {t3:.2f}ms (model reloaded)")
-    print(f"Vector matches: {vector1 == vector3}")
-    
-    mem_reloaded = get_memory_usage()
-    if mem_reloaded['model_loaded']:
-        print("✅ Model successfully reloaded")
-    else:
-        print("❌ Model reload failed")
-    
-    print("\n" + "="*60)
-    print("All tests passed!")
-    print("="*60)
+    print(f"\nDimension: {len(vector1)}")
+    print(f"Cache stats: {get_cache_stats()}")
