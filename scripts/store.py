@@ -22,6 +22,7 @@ try:
     from scripts.exceptions import StorageError, ValidationError
     from scripts.models import Memory, SearchResult
     from scripts.vector_ops import normalize, batch_cosine_similarity
+    from scripts.timeout import optional_timeout, QueryTimeoutError
 except ImportError:
     # Fallback if running directly without package structure
     import logging
@@ -36,6 +37,12 @@ except ImportError:
     class ValidationError(Exception): pass
     class Memory: pass
     class SearchResult: pass
+    # Timeout fallback
+    from contextlib import contextmanager
+    @contextmanager
+    def optional_timeout(seconds):
+        yield
+    class QueryTimeoutError(TimeoutError): pass
 
 logger = get_logger("store")
 config = get_config()
@@ -302,6 +309,7 @@ class MemoryStore:
         
         Raises:
             ValidationError: If query is invalid
+            QueryTimeoutError: If query exceeds timeout
         """
         if not query or not query.strip():
             return []
@@ -309,6 +317,30 @@ class MemoryStore:
         if len(query) > 1000:
              raise ValidationError(f"Query too long ({len(query)} > 1000 chars)")
         
+        # Convert timeout_ms to seconds for timeout context
+        timeout_sec = timeout_ms / 1000.0 if timeout_ms > 0 else None
+        
+        try:
+            with optional_timeout(timeout_sec):
+                return self._recall_internal(
+                    query, collection, topk, filters, 
+                    min_importance, since, before
+                )
+        except QueryTimeoutError:
+            logger.warning(f"Query timed out after {timeout_ms}ms: {query[:50]}...")
+            raise QueryTimeoutError(f"Query timed out after {timeout_ms}ms")
+    
+    def _recall_internal(
+        self,
+        query: str,
+        collection: Optional[str] = None,
+        topk: int = 5,
+        filters: Optional[Dict[str, Any]] = None,
+        min_importance: Optional[float] = None,
+        since: Optional[str] = None,
+        before: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Internal recall implementation (called with timeout wrapper)."""
         # Handle imports for both module and direct execution
         try:
             from scripts.embed import embed
