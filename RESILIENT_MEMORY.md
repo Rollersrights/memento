@@ -2,6 +2,8 @@
 
 **Automatic memory storage that survives sessions, reboots, and failures.**
 
+*Version: v0.2.2*
+
 ## Architecture
 
 ```
@@ -40,6 +42,7 @@
 ## Components
 
 ### 1. Auto-Memory (`scripts/auto_memory.py`)
+
 Automatically stores significant conversations:
 - Detects decisions, RFCs, bugs, benchmarks
 - Auto-tags (rust, github, bob, brett, etc.)
@@ -48,29 +51,38 @@ Automatically stores significant conversations:
 
 **Usage:**
 ```python
-from scripts.auto_memory import store_interaction, recall_memories
+from memento import get_store
 
-# Store (automatic significance detection)
-store_interaction(
-    query="What did we decide?",
-    response="Approved RFC-001",
-    context="Architecture meeting"
+store = get_store()
+
+# Store with auto-detection (or manual)
+store.remember(
+    text="Approved RFC-001 for Rust architecture",
+    importance=0.9,
+    tags=["decision", "rust"]
 )
 
 # Recall
-results = recall_memories("Rust decision", topk=5)
+results = store.recall("Rust decision", topk=5)
 ```
 
 ### 2. Health Monitor (`scripts/memento_health.sh`)
+
 Hourly automated tasks:
-- Database integrity check
+- Database integrity check (`PRAGMA integrity_check`)
 - Daily backup creation
 - Auto-rollback on corruption
 - Log rotation
 
 **Runs via:** Cron job every hour
 
+```bash
+# Add to crontab
+0 * * * * /path/to/memento/scripts/memento_health.sh
+```
+
 ### 3. Failure Handler (`scripts/memento_failure_handler.py`)
+
 When Memento breaks:
 1. Logs critical error
 2. Attempts rollback from backup
@@ -78,14 +90,26 @@ When Memento breaks:
 4. Alerts via logs
 
 ### 4. Daily Backups
-Location: `~/.openclaw/memory/backups/`
+
+Location: `~/.memento/backups/`
 Retention: Last 7 backups
+
+```bash
+# Manual backup
+memento backup
+
+# Or programmatically
+from memento import get_store
+store = get_store()
+backup_path = store.backup()
+```
 
 ## Failure Recovery
 
 ### Scenario: Database Corruption
+
 ```
-1. Health check detects corruption
+1. Health check detects corruption (PRAGMA integrity_check)
 2. Auto-rollback to latest backup
 3. Create GitHub issue #XXX
 4. Log failure to failures.log
@@ -93,18 +117,39 @@ Retention: Last 7 backups
 ```
 
 ### Scenario: Complete DB Loss
+
 ```
-1. Check for backups
-2. Restore latest
+1. Check for backups in ~/.memento/backups/
+2. Restore latest backup
 3. Create GitHub issue
 4. Alert user of data loss window
 ```
 
+### Manual Recovery
+
+```bash
+# Check database integrity
+sqlite3 ~/.memento/memory.db "PRAGMA integrity_check;"
+
+# Restore from backup
+cp ~/.memento/backups/memory_YYYYMMDD_HHMMSS.db \
+   ~/.memento/memory.db
+
+# Export to JSON for inspection
+memento export > memories.json
+```
+
 ## Monitoring
 
-**Health Log:** `~/.openclaw/memory/health.log`
-**Failure Log:** `~/.openclaw/memory/failures.log`
-**Auto-Memory Log:** `~/.openclaw/memory/automemory.log`
+**Health Log:** `~/.memento/logs/health.log`
+**Failure Log:** `~/.memento/logs/failures.log`
+**Auto-Memory Log:** `~/.memento/logs/automemory.log`
+
+View logs:
+```bash
+tail -f ~/.memento/logs/health.log
+tail -f ~/.memento/logs/failures.log
+```
 
 ## GitHub Integration
 
@@ -114,28 +159,6 @@ On failure:
 - Assigned to team
 - Tracked in project board
 
-## Manual Operations
-
-**Force backup:**
-```bash
-~/.openclaw/workspace/memento/scripts/memento_health.sh
-```
-
-**Check health:**
-```bash
-python3 -c "
-from scripts.auto_memory import get_memory
-mem = get_memory()
-print(f'Vectors: {mem.store.stats()[\"total_vectors\"]}')
-"
-```
-
-**Restore from backup:**
-```bash
-cp ~/.openclaw/memory/backups/memory_YYYYMMDD_HHMMSS.db \
-   ~/.openclaw/memory/memory.db
-```
-
 ## Guarantees
 
 - ✅ **Persistence:** Survives session restarts
@@ -143,12 +166,28 @@ cp ~/.openclaw/memory/backups/memory_YYYYMMDD_HHMMSS.db \
 - ✅ **Monitoring:** Hourly health checks
 - ✅ **Alerts:** GitHub issues on failure
 - ✅ **Backups:** Daily snapshots, 7-day retention
+- ✅ **Timeout Protection:** Query timeout prevents hangs
+
+## Configuration
+
+Config file (`~/.memento/config.yaml`):
+```yaml
+storage:
+  db_path: ~/.memento/memory.db
+  backup_enabled: true
+  backup_retention_days: 7
+  
+health:
+  check_interval_hours: 1
+  auto_rollback: true
+```
 
 ## Team Responsibilities
 
-**Rita:** Maintain health scripts, monitor logs
-**Bob:** Review GitHub issues, fix failures
+**Rita:** Maintain health scripts, monitor logs, Rust engine
+**Bob:** Review GitHub issues, fix failures, CI/CD
 **Brett:** Access to backups, disaster recovery
 
 ---
-*Always Available Memory System - v0.2.0*
+
+*Always Available Memory System - v0.2.2*

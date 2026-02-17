@@ -72,11 +72,12 @@ Then create PR via GitHub:
 ### 5. Code Review
 
 **Reviewers check:**
-- [ ] Code quality
-- [ ] Tests pass
+- [ ] Code quality (type hints, docstrings)
+- [ ] Tests pass (including new tests)
 - [ ] Documentation updated
 - [ ] No breaking changes (or documented)
 - [ ] Performance acceptable
+- [ ] CI passes
 
 **Address feedback:**
 ```bash
@@ -99,6 +100,8 @@ After approval:
 - ❌ Merge without review
 - ❌ Delete branches before PR merge
 - ❌ Work on multiple features in one branch
+- ❌ Skip type hints on public APIs
+- ❌ Skip tests for new features
 
 ## ✅ What TO do
 
@@ -109,6 +112,8 @@ After approval:
 - ✅ Request reviews
 - ✅ Respond to feedback promptly
 - ✅ Keep PRs focused and small
+- ✅ Add type hints to all functions
+- ✅ Update CHANGELOG.md
 
 ## 🔐 Branch Protection
 
@@ -117,6 +122,7 @@ After approval:
 - Requires 1 review approval
 - CI tests must pass
 - No force pushes
+- Up to date with base branch
 
 ## 📝 Commit Message Examples
 
@@ -125,7 +131,8 @@ After approval:
 Issue #17: Fix bare except clauses in dashboard.py
 
 - Replaced 4 bare 'except:' with 'except Exception'
-- Added descriptive comments
+- Added logging for caught exceptions
+- Added test coverage for error paths
 - No functional changes
 
 Fixes #17
@@ -145,6 +152,8 @@ fix stuff
 - `phase-N` - Implementation phase
 - `performance` - Speed improvements
 - `refactoring` - Code restructuring
+- `good first issue` - Beginner-friendly
+- `help wanted` - Community contribution welcome
 
 ## 👥 Roles
 
@@ -152,25 +161,40 @@ fix stuff
 - Performance optimizations
 - Cross-platform compatibility
 - Infrastructure
+- Rust integration
 
-**@Bob:**
+**Bob:**
 - Code quality (types, tests)
 - CLI/UX improvements
 - Documentation
-- Rust integration
+- CI/CD
+
+**Brett:**
+- Architecture decisions
+- Integration
+- Deployment
 
 ## 📋 Checklist for PRs
 
 - [ ] Issue created and linked
 - [ ] Branch created from latest main
 - [ ] Changes are focused and atomic
+- [ ] Type hints added/updated
 - [ ] Tests added/updated
-- [ ] Documentation updated
+- [ ] Documentation updated (README, docstrings)
 - [ ] CHANGELOG.md updated
 - [ ] CI passes
 - [ ] Review requested
 - [ ] Feedback addressed
 - [ ] Squash merged to main
+
+## 🧪 CI Requirements
+
+All PRs must pass:
+- Python 3.8, 3.9, 3.10, 3.11, 3.12 tests
+- flake8 linting
+- pytest test suite
+- CLI smoke tests
 
 ---
 

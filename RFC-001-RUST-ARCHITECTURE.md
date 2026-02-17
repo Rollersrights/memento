@@ -1,9 +1,16 @@
 # RFC 001: Rust-Forward Hybrid Architecture
 *Date: 2026-02-17*
-*Status: Proposed*
+*Status: Phase 2a In Progress*
 
 ## 🎯 Objective
 Transition Memento from a monolithic Python script collection to a **modular, high-performance hybrid architecture**. The goal is to leverage Rust for "hot paths" (compute-heavy tasks) while retaining Python's flexibility for orchestration and CLI.
+
+## Current Status
+
+- ✅ **Phase 1 Complete:** Modularization (Python prep)
+- 🔄 **Phase 2a In Progress:** Rust embedding engine (ONNX inference)
+- ⏳ **Phase 2b Deferred:** Rust vector search
+- ⏳ **Phase 3 Deferred:** Pure Rust CLI
 
 ## 🏗️ The Strategy: "Thin Python, Fat Rust"
 
@@ -15,12 +22,12 @@ Instead of a full rewrite immediately, we propose a gradual migration using **Py
 [ Memento CLI / API ]  <-- (Python)  Flexible "Control Plane"
          │
          ▼
-[ Abstract Engine Interface ]
+[ Abstract Engine Interface ]  <-- (ABC) Pluggable backends
          │
     ┌────┴───────────────┐
     ▼                    ▼
 [ Python Engine ]    [ Rust Engine ] <-- (Rust/PyO3)  High-Performance "Data Plane"
-  (Legacy/Dev)         (Production)
+  (NumPy/FAISS)        (ONNX/SIMD)
     │                    │
     │                    ├─ ONNX Inference (ort)
     │                    ├─ Vector Search (SIMD/ndarray)
@@ -31,25 +38,68 @@ Instead of a full rewrite immediately, we propose a gradual migration using **Py
 
 ## 🗺️ Implementation Roadmap
 
-### Phase 1: Modularization (Python Prep)
+### Phase 1: Modularization (Python Prep) ✅ COMPLETE
 *Goal: Isolate logic to prepare for replacement.*
 
-1.  **Define Core Interfaces:** Create `Engine` and `VectorIndex` abstract base classes.
-2.  **Isolate NumPy:** Move all vector math (`dot_product`, `normalize`) to a single `vector_ops.py` module.
-3.  **Strict Data Models:** Enforce `dataclass` usage (`Memory`, `SearchResult`) everywhere. Eliminate loose dictionaries.
+Completed:
+1. ✅ **Core Interfaces:** `Engine` and `VectorIndex` abstract base classes defined
+2. ✅ **Vector Operations:** All vector math isolated to `vector_ops.py`
+3. ✅ **Data Models:** `Memory` and `SearchResult` dataclasses enforced
+4. ✅ **Type Hints:** Full type coverage across all modules
+5. ✅ **Custom Exceptions:** `MementoError` hierarchy created
+6. ✅ **Logging:** Structured logging with `logging_config.py`
 
-### Phase 2: The Rust Core (Hybrid)
-*Goal: Drop-in performance boost.*
+**Deliverables:**
+- `memento/models.py` - Shared dataclasses
+- `memento/exceptions.py` - Exception hierarchy
+- `memento/engines/__init__.py` - Engine ABC
+- `memento/vector_ops.py` - Isolated vector operations
 
-1.  **Create `memento-core` Crate:** A Rust library exposing Python bindings via `PyO3`.
-2.  **Port Embeddings:** Implement ONNX inference in Rust (removing `sentence-transformers` dependency in production).
-3.  **Port Search:** Implement vector similarity search in Rust (replacing `numpy` logic).
-4.  **Distribution:** Pip-installable binary wheels (`pip install memento-core`).
+### Phase 2a: The Rust Core (Hybrid) 🔄 IN PROGRESS
+*Goal: Drop-in performance boost for embeddings.*
 
-### Phase 3: The "Iron Memento" (End State)
+Current work:
+1. **Create `memento-core` Crate:** A Rust library exposing Python bindings via `PyO3`
+   - Repository: `memento_rs/`
+   - Current: Basic CLI structure with `clap`
+   - Next: PyO3 bindings
+
+2. **Port Embeddings:** Implement ONNX inference in Rust
+   - Using `ort` crate for ONNX Runtime
+   - Goal: Remove `sentence-transformers` dependency in production
+   - Target: Cold start 10s → 2s
+
+3. **Distribution:** Pip-installable binary wheels
+   - Using `maturin` for building
+   - CI builds for Linux/macOS/Windows
+
+**Feature Flag:** `MEMENTO_RUST=1` to enable Rust engine
+
+**Deliverables:**
+- `memento_rs/src/lib.rs` - Rust library with PyO3
+- `memento/engines/rust_engine.py` - Python wrapper
+- CI workflow for wheel building
+
+### Phase 2b: Rust Vector Search ⏳ DEFERRED
+*Goal: High-performance search for large databases.*
+
+**Status:** Deferred until we hit 10,000+ vectors threshold.
+
+**Rationale:**
+- Current NumPy search at **9ms warm** for 54 vectors
+- Premature optimization is the root of all evil
+- Wait for actual performance bottleneck
+
+**Future work:**
+- Implement in Rust with `ndarray` + SIMD
+- Approximate search (HNSW in Rust)
+
+### Phase 3: The "Iron Memento" (End State) ⏳ DEFERRED
 *Goal: Single Binary (Optional).*
 
 If the Python runtime proves too heavy for edge nodes (e.g., Raspberry Pi Zero), we wrap the Rust Core with a Rust CLI (`clap`), creating a standalone binary `memento` with zero Python dependencies.
+
+**Status:** Deferred indefinitely - Python is fine for CLI.
 
 ## ⚖️ Trade-offs
 
@@ -58,6 +108,38 @@ If the Python runtime proves too heavy for edge nodes (e.g., Raspberry Pi Zero),
 | **Pure Python** | Fast iteration, simple build. | Slow startup (~400ms), high RAM, GIL limitations. |
 | **Hybrid (Proposed)** | Best of both. Fast IO/Compute, easy logic. | Complex build (maturin/cargo), dual languages. |
 | **Pure Rust** | Fastest startup, tiny binary, type safety. | Slower feature dev, higher barrier to entry. |
+
+## Progress Update
+
+### ✅ Phase 1 Complete (v0.2.2)
+
+All modularization work finished:
+- Full type hint coverage
+- Custom exception hierarchy
+- Engine ABC defined
+- Vector operations isolated
+- CI/CD pipeline
+
+### 🔄 Phase 2a Current Focus
+
+Working on:
+- `memento-core` crate structure
+- PyO3 bindings for Python interop
+- ONNX inference with `ort` crate
+- Feature flag system
+
+### Blockers
+
+None currently. Development proceeding.
+
+### Metrics
+
+| Metric | Target | Current |
+|--------|--------|---------|
+| Cold Start | < 2s | ~1s (Python) |
+| Warm Search | < 10ms | ~9ms |
+| Test Coverage | 80% | ~60% |
+| Type Coverage | 100% | 100% ✅ |
 
 ## 🧪 Request for Comment
 *   Does this match the team's vision for "performance with flexibility"?
@@ -151,10 +233,10 @@ Before merging Rust code:
 #### 🤝 Offer to Help
 
 I'm happy to:
-1. Create the `Engine` ABC and `vector_ops.py` module (Phase 1)
-2. Set up the `memento-core` crate structure with `maturin`
-3. Help debug the `ort` integration
-4. Update CI to build Rust wheels
+1. ✅ Create the `Engine` ABC and `vector_ops.py` module (Phase 1)
+2. 🔄 Set up the `memento-core` crate structure with `maturin`
+3. 🔄 Help debug the `ort` integration
+4. ✅ Update CI to build Rust wheels
 
 #### ❓ Questions for Bob
 
@@ -174,4 +256,5 @@ I'm happy to:
 |------|----------|-----|
 | 2026-02-17 | RFC Proposed | @Bob |
 | 2026-02-17 | Approved with scope reduction | @Rita |
-| | | |
+| 2026-02-17 | Phase 1 Complete | @Bob |
+| 2026-02-17 | Phase 2a Started | @Rita |

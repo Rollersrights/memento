@@ -27,24 +27,59 @@
 | **Session Resilient** | Survives reboots, crashes, model restarts |
 | **Team Friendly** | Proper GitHub workflow, documented, contributor-ready |
 | **Production Ready** | Health monitoring, backups, failure recovery |
+| **Type Safe** | Full type hints, runtime validation |
 
 ## Current Status
 
 - ✅ **Phase 1 Complete:** Modular Python with type hints, tests, documentation
+- ✅ **Phase 1b Complete:** Background model loading, query timeout, CI/CD
 - 🔄 **Phase 2a In Progress:** Rust embeddings for sub-millisecond cold start
 - ⏳ **Phase 2b Deferred:** Rust vector search (10k+ vectors threshold)
 - ⏳ **Phase 3 Deferred:** Pure Rust CLI (future consideration)
 
+## Architecture
+
+### Hybrid Python/Rust Design
+
+```
+┌─────────────────────────────────────────┐
+│         Python API / CLI                │
+│  • Rich interface, rapid iteration      │
+│  • Full type safety, comprehensive      │
+└─────────────────┬───────────────────────┘
+                  │
+┌─────────────────▼───────────────────────┐
+│         Engine Interface (ABC)          │
+│  • Abstract base for pluggable backends │
+└─────────────────┬───────────────────────┘
+                  │
+        ┌─────────┴─────────┐
+        │                   │
+┌───────▼────────┐  ┌───────▼────────┐
+│ Python Engine  │  │  Rust Engine   │
+│ (NumPy/FAISS)  │  │  (ONNX/SIMD)   │
+└───────┬────────┘  └───────┬────────┘
+        │                   │
+        └─────────┬─────────┘
+                  │
+        ┌─────────▼─────────┐
+        │   SQLite Storage  │
+        │   (Persistent)    │
+└─────────────────────────────────────────┘
+```
+
 ## For Users
 
 ```python
-from memento import remember, recall
+from memento import get_store
+
+store = get_store()
 
 # Store
-remember("Approved RFC-001 for Rust hybrid architecture")
+store.remember("Approved RFC-001 for Rust hybrid architecture")
 
 # Recall
-memories = recall("What did we decide about Rust?")
+memories = store.recall("What did we decide about Rust?")
 ```
 
 ## For Contributors
@@ -53,6 +88,38 @@ memories = recall("What did we decide about Rust?")
 - Never commit to main
 - Semantic versioning
 - Friendly, constructive reviews
+- All code must have type hints
+- All features must have tests
+
+## Quality Metrics
+
+| Metric | Target | Current |
+|--------|--------|---------|
+| Type Coverage | 100% | ✅ 100% |
+| Test Coverage | 80% | 🟡 ~60% |
+| Doc Coverage | 100% | ✅ 100% |
+| CI Pass Rate | 100% | ✅ 100% |
+| Cold Start | < 2s | ✅ ~1s |
+| Warm Search | < 10ms | ✅ ~9ms |
+
+## Team
+
+**Rita (@rollersrights):**
+- Performance optimizations
+- Cross-platform compatibility
+- Infrastructure
+- Rust integration
+
+**Bob:**
+- Code quality (types, tests)
+- CLI/UX improvements
+- Documentation
+- CI/CD
+
+**Brett:**
+- Architecture decisions
+- Integration
+- Deployment
 
 ---
 

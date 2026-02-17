@@ -2,22 +2,21 @@
 
 All notable changes to Memento will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
 ### Added
-- **Cache Warming Strategy** - Issue #20
-  - `warmup_cache()` function to pre-compute embeddings for common queries
-  - CLI script `scripts/warmup.py` for cron jobs and automation
-  - 21 common memory query patterns included (personal, team, technical)
-  - Batch warming for efficiency (~7.5ms per query)
-  - JSON output for monitoring and logging
-- **Model Memory Management** - Issue #19
-  - `unload_model()` function to free ~80MB RAM
-  - `set_idle_timeout(minutes)` for automatic unload after inactivity
-  - `get_memory_usage()` to check model RAM status
-  - Model reloads transparently on next embed() call
+- Full type hint coverage across all modules
+- GitHub Actions CI/CD pipeline
+
+### Changed
+- Improved documentation for all public APIs
+
+## [0.2.2] - 2026-02-17
+
+### Added
 - **Background Model Loading** - Fixes cold start latency (#13)
   - Model loads in background thread on module import
   - `warmup()` function for explicit pre-loading
@@ -27,13 +26,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - New `timeout_ms` parameter in `recall()` method
   - `QueryTimeoutError` exception for timeout handling
   - Unix (SIGALRM) and Windows (threading) implementations
-  - Default 10s timeout prevents runaway queries
+  - Default 5s timeout prevents runaway queries
+- **Complete Type Hints** - Full mypy-compatible type annotations (#12, #13, #14, #15)
+  - `store.py`: MemoryStore class fully typed
+  - `embed.py`: All embedding functions typed
+  - `cli.py`: CLI functions and argument parsers typed
+  - `search.py`: Search functions and filters typed
+  - `models.py`: Dataclass definitions with proper types
+- **GitHub Actions CI** - Automated testing on push/PR
+  - Tests on Python 3.8, 3.9, 3.10, 3.11, 3.12
+  - Model caching for faster CI runs
+  - Linting with flake8
 
 ### Fixed
 - **Import paths in analyze_bottlenecks.py** - Fixed 'No module named scripts' error (#15)
-- Analyzer now correctly detects embedder and generates bottleneck reports
+  - Analyzer now correctly detects embedder and generates bottleneck reports
 - **SearchResult item assignment** - Fixed dict-like assignment for dynamic fields (#17)
 - **PersistentCache.get_cache_key** - Added missing method for test compatibility (#18)
+
+### Changed
+- pyproject.toml version bumped to 0.2.2
+- Enhanced docstrings across all public APIs
+- Improved error messages with more context
 
 ## [0.2.1] - 2026-02-17
 
@@ -72,4 +86,3 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Document ingestion
 - Dashboard
 - Auto-store for conversation memory
-
