@@ -55,7 +55,7 @@ logger = get_logger("store")
 config = get_config()
 
 # Default storage path (override with MEMORY_DB_PATH env var)
-DEFAULT_DB_PATH = os.environ.get('MEMORY_DB_PATH', os.path.expanduser("~/.memento/memory.db"))
+DEFAULT_DB_PATH = os.environ.get('MEMORY_DB_PATH', config.storage.db_path)
 
 # Store instance cache — keyed by db_path for reuse
 _stores: Dict[str, 'MemoryStore'] = {}
