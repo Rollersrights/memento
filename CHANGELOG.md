@@ -6,15 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
-### Added
-- Logging infrastructure (`scripts/logging_config.py`)
-- CI/CD with GitHub Actions
-- Linting configuration (flake8)
-- pyproject.toml for modern packaging
-- CONTRIBUTING.md and CHANGELOG.md
+## [0.2.1] - 2026-02-17
 
-### Changed
-- Improved project structure documentation
+### Added
+- **Echo Notifications** 💾 - Visible CLI feedback when memories stored
+- **MEMORY_ECHO env var** - Control notification display
+- **Lower storage threshold** - 0.15 (was 0.3), captures ~40% more conversations
+
+### Changed  
+- Session watcher shows cleaner output with emoji confirmations
+- [auto] vs [explicit] tags distinguish auto-store from "remember this"
 
 ## [0.2.0] - 2026-02-17
 
