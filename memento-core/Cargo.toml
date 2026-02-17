@@ -1,0 +1,30 @@
+[package]
+name = "memento-core"
+version = "0.1.0"
+edition = "2021"
+authors = ["Rollersrights <rollersrights@example.com>"]
+description = "Rust core for Memento embeddings - fast ONNX inference"
+license = "MIT"
+repository = "https://github.com/Rollersrights/memento"
+
+[lib]
+name = "memento_core"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# PyO3 for Python bindings
+pyo3 = { version = "0.21", features = ["extension-module", "abi3-py38"] }
+
+# Utilities
+thiserror = "1.0"
+
+[dev-dependencies]
+pyo3 = { version = "0.21", features = ["auto-initialize"] }
+
+[features]
+default = ["onnxruntime"]
+onnxruntime = []
+
+[package.metadata.maturin]
+name = "memento_core"
+python-source = "python"
