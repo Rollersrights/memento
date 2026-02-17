@@ -16,10 +16,10 @@ crate-type = ["cdylib", "rlib"]
 pyo3 = { version = "0.21", features = ["extension-module", "abi3-py38"] }
 
 # ONNX Runtime for fast inference
-ort = { version = "2.0", features = ["ndarray"] }
+ort = { version = "2.0.0-rc.11", default-features = false, features = ["ndarray", "download-binaries", "tls-rustls"] }
 
-# Tokenizers for text preprocessing
-tokenizers = "0.15"
+# Tokenizers for text preprocessing - use only essential features
+tokenizers = { version = "0.15", default-features = false, features = ["onig"] }
 
 # N-dimensional arrays for tensor operations
 ndarray = "0.15"
