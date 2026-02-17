@@ -13,8 +13,25 @@ from typing import List, Optional
 # Add parent dir to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from scripts.store import MemoryStore
-from scripts.embed import get_cache_stats, _get_embedder_type
+# Lazy imports — don't load store/embed at module level
+# This means `memento --help` and `memento stats` are instant
+_store = None
+_cache_stats_fn = None
+
+def _get_store():
+    global _store
+    if _store is None:
+        from scripts.store import MemoryStore
+        _store = MemoryStore()
+    return _store
+
+def _get_cache_stats():
+    from scripts.embed import get_cache_stats
+    return get_cache_stats()
+
+def _get_embedder_type():
+    from scripts.embed import _get_embedder_type
+    return _get_embedder_type()
 
 # Try to import Rich for pretty output
 try:
@@ -93,7 +110,7 @@ def print_results(results: List[dict], output_format: str = 'table'):
 
 def cmd_remember(args: argparse.Namespace) -> None:
     """Store a memory."""
-    store = MemoryStore()
+    store = _get_store()
     text = " ".join(args.text)
     
     # Read from stdin if text is "-"
@@ -118,7 +135,7 @@ def cmd_remember(args: argparse.Namespace) -> None:
 
 def cmd_recall(args: argparse.Namespace) -> None:
     """Search memories."""
-    store = MemoryStore()
+    store = _get_store()
     query = " ".join(args.query)
     
     results = store.recall(
@@ -131,7 +148,7 @@ def cmd_recall(args: argparse.Namespace) -> None:
 
 def cmd_delete(args: argparse.Namespace) -> None:
     """Delete a memory."""
-    store = MemoryStore()
+    store = _get_store()
     if store.delete(args.id):
         if HAS_RICH and CONSOLE:
             CONSOLE.print(f"[bold red]🗑️ Deleted:[/bold red] {args.id}")
@@ -143,11 +160,11 @@ def cmd_delete(args: argparse.Namespace) -> None:
 
 def cmd_stats(args: argparse.Namespace) -> None:
     """Show statistics."""
-    store = MemoryStore()
+    store = _get_store()
     stats = store.stats()
     
     # Add embedding stats
-    cache_stats = get_cache_stats()
+    cache_stats = _get_cache_stats()
     
     if args.format == 'json':
         stats['cache'] = cache_stats

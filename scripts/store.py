@@ -9,6 +9,7 @@ import json
 import time
 import hashlib
 import sqlite3
+import threading
 from typing import List, Dict, Optional, Any
 from pathlib import Path
 
@@ -42,37 +43,34 @@ config = get_config()
 # Default storage path (override with MEMORY_DB_PATH env var)
 DEFAULT_DB_PATH = os.environ.get('MEMORY_DB_PATH', os.path.expanduser("~/.memento/memory.db"))
 
-# Singleton instance cache
-_store_instance = None
-_store_path = None
+# Store instance cache — keyed by db_path for reuse
+_stores: Dict[str, 'MemoryStore'] = {}
+
+
+def get_store(db_path: str = DEFAULT_DB_PATH) -> 'MemoryStore':
+    """
+    Factory function to get or create a MemoryStore.
+    
+    Reuses existing instances for the same db_path.
+    Preferred over direct instantiation for singleton behavior.
+    """
+    if db_path not in _stores:
+        _stores[db_path] = MemoryStore(db_path)
+    return _stores[db_path]
+
 
 class MemoryStore:
     """High-level interface for semantic memory using NumPy + SQLite.
     
-    Uses singleton pattern - multiple instantiations with same db_path 
-    return the same instance to avoid connection overhead.
+    Use get_store() for cached/singleton access.
+    Direct instantiation always creates a new instance (useful for testing).
     """
     
-    def __new__(cls, db_path: str = DEFAULT_DB_PATH):
-        """Singleton pattern - reuse existing instance for same path."""
-        global _store_instance, _store_path
-        
-        if _store_instance is not None and _store_path == db_path:
-            return _store_instance
-        
-        # Create new instance
-        instance = super().__new__(cls)
-        _store_instance = instance
-        _store_path = db_path
-        return instance
-    
     def __init__(self, db_path: str = DEFAULT_DB_PATH):
-        """Initialize the memory store. Safe to call multiple times (singleton)."""
-        # Skip re-initialization if already initialized
-        if hasattr(self, '_initialized') and self._initialized:
-            return
+        """Initialize the memory store."""
         
         self.db_path = db_path
+        self._write_lock = threading.Lock()
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         
         # Connect to SQLite with thread safety
@@ -95,6 +93,7 @@ class MemoryStore:
         self._index_needs_refresh = True
         
         self._init_tables()
+        self._init_fts5()
         self._load_vectors()
         
         # Mark as initialized
@@ -126,6 +125,30 @@ class MemoryStore:
         """)
         
         self.conn.commit()
+
+    def _init_fts5(self) -> None:
+        """Initialize FTS5 full-text search (one-time setup)."""
+        self._fts5_available = False
+        try:
+            cursor = self.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='memories_fts'"
+            )
+            if not cursor.fetchone():
+                self.conn.execute("""
+                    CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+                        text,
+                        content='memories',
+                        content_rowid='rowid'
+                    )
+                """)
+                self.conn.execute("""
+                    INSERT INTO memories_fts(rowid, text)
+                    SELECT rowid, text FROM memories WHERE text IS NOT NULL
+                """)
+                self.conn.commit()
+            self._fts5_available = True
+        except Exception:
+            pass  # FTS5 not available on this SQLite build
     
     def _load_vectors(self) -> None:
         """Load all vectors into memory for fast search (binary format)."""
@@ -214,27 +237,28 @@ class MemoryStore:
         # Store in SQLite as binary blob (fast) not JSON (slow)
         embedding_bytes = embedding_np.tobytes()
         
-        self.conn.execute(
-            """INSERT INTO memories 
-               (id, text, timestamp, source, session_id, importance, tags, collection, embedding)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (doc_id, text, int(time.time()), source, session_id, 
-             float(importance), ','.join(tags) if tags else '', collection,
-             embedding_bytes)
-        )
-        
-        self.conn.commit()
-        
-        # Sync to FTS5 for BM25 search
-        try:
+        with self._write_lock:
             self.conn.execute(
-                "INSERT INTO memories_fts(rowid, text) VALUES (last_insert_rowid(), ?)",
-                (text,)
+                """INSERT INTO memories 
+                   (id, text, timestamp, source, session_id, importance, tags, collection, embedding)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (doc_id, text, int(time.time()), source, session_id, 
+                 float(importance), ','.join(tags) if tags else '', collection,
+                 embedding_bytes)
             )
+            
             self.conn.commit()
-        except Exception:
-            # FTS5 table might not exist, ignore
-            pass
+            
+            # Sync to FTS5 for BM25 search
+            try:
+                self.conn.execute(
+                    "INSERT INTO memories_fts(rowid, text) VALUES (last_insert_rowid(), ?)",
+                    (text,)
+                )
+                self.conn.commit()
+            except Exception:
+                # FTS5 table might not exist, ignore
+                pass
         
         # Update in-memory cache
         self._vectors[doc_id] = embedding_np
@@ -442,17 +466,18 @@ class MemoryStore:
         for doc_id, score in similarities[:topk]:
             if doc_id in rows:
                 row = rows[doc_id]
-                results.append({
-                    'id': row[0],
-                    'text': row[1],
-                    'timestamp': row[2],
-                    'source': row[3],
-                    'session_id': row[4],
-                    'importance': row[5],
-                    'tags': row[6].split(',') if row[6] else [],
-                    'collection': row[7],
-                    'score': score
-                })
+                result = SearchResult(
+                    id=row[0],
+                    text=row[1],
+                    timestamp=row[2],
+                    source=row[3],
+                    session_id=row[4],
+                    importance=row[5],
+                    tags=row[6].split(',') if row[6] else [],
+                    collection=row[7],
+                    score=score
+                )
+                results.append(result)
         
         return results
     
@@ -635,8 +660,9 @@ class MemoryStore:
     def delete(self, doc_id: str, collection: str = "knowledge") -> bool:
         """Delete a memory by ID."""
         try:
-            self.conn.execute("DELETE FROM memories WHERE id = ?", (doc_id,))
-            self.conn.commit()
+            with self._write_lock:
+                self.conn.execute("DELETE FROM memories WHERE id = ?", (doc_id,))
+                self.conn.commit()
             
             # Update cache - remove from both dict and list
             if doc_id in self._vectors:

@@ -9,7 +9,11 @@ from datetime import datetime
 
 @dataclass
 class Memory:
-    """Represents a single memory item."""
+    """Represents a single memory item.
+    
+    Supports dict-like access (result['text'], result.get('score'))
+    for backward compatibility with code expecting dicts.
+    """
     id: str
     text: str
     timestamp: int
@@ -35,6 +39,16 @@ class Memory:
             "tags": self.tags,
             "collection": self.collection
         }
+
+    # Dict-like access for backward compatibility
+    def __getitem__(self, key: str) -> Any:
+        return self.to_dict()[key]
+
+    def __contains__(self, key: str) -> bool:
+        return key in self.to_dict()
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self.to_dict().get(key, default)
 
 @dataclass
 class SearchResult(Memory):
