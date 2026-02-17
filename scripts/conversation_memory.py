@@ -169,8 +169,8 @@ class ConversationMemory:
             score += 0.3
             reasons.append("file_modified")
         
-        # Decision threshold (lowered to catch more casual conversation)
-        threshold = 0.3  # Was 0.4 - now catches more chat
+        # Decision threshold (LOWERED to capture more conversations)
+        threshold = 0.15  # Was 0.3 - now captures ~40% more casual chat
         should_store_flag = score >= threshold
         
         reason_str = ','.join(reasons) if reasons else 'low_score'

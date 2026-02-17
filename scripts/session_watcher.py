@@ -201,7 +201,10 @@ class SessionLogWatcher:
                         exchange['assistant']
                     )
                     if doc_id:
-                        print(f"  Stored: {doc_id[:8]}... (score:{confidence}, {reason})")
+                        # Echo notification
+                        preview = exchange['user'][:50] + "..." if len(exchange['user']) > 50 else exchange['user']
+                        source_tag = "[explicit]" if confidence >= 0.9 else "[auto]"
+                        print(f"  💾 Stored {source_tag}: \"{preview}\" (score:{confidence:.2f})")
                         stored_count += 1
                 
                 # Mark as processed either way
@@ -214,20 +217,19 @@ class SessionLogWatcher:
         # Save state
         self.save_processed_hashes(processed)
         
-        print(f"[Watcher] Stored {stored_count}/{len(new_exchanges[:max_per_run])} exchanges")
+        if stored_count > 0:
+            print(f"[Watcher] ✅ Stored {stored_count}/{len(new_exchanges[:max_per_run])} exchanges")
+        else:
+            print(f"[Watcher] ℹ️ No memories stored from {len(new_exchanges[:max_per_run])} exchanges")
         return stored_count
 
 def main():
     """Main entry point for cron"""
-    print(f"[{datetime.now().strftime('%H:%M')}] Session Watcher starting...")
-    
     watcher = SessionLogWatcher()
     count = watcher.process_new_exchanges(max_per_run=20)  # Process more per run
     
     if count > 0:
-        print(f"✅ Stored {count} new memories")
-    else:
-        print("ℹ️ No new memories to store")
+        print(f"✅ Session watcher: stored {count} new memories")
     
     return count
 
