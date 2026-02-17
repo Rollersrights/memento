@@ -35,3 +35,30 @@
 - **Persistence:** SQLite disk cache is working great (4ms cold boot).
 - **Optimization:** ONNX + AVX2 auto-detection is solid.
 - **Logging:** Centralized logger is live.
+
+## Rita's Suggestions
+
+### Quick Wins (Can do today)
+- [ ] Fix 8 bare `except:` clauses in codebase
+- [ ] Add type hints to `cli.py` public functions
+- [ ] Create `MementoError` exception class for better error handling
+- [ ] Add more test coverage for `embed.py` (cache hit/miss scenarios)
+
+### Type Hints Priority Order
+1. `scripts/store.py` - `MemoryStore` class (public API)
+2. `scripts/embed.py` - `embed()` function
+3. `scripts/cli.py` - All CLI functions
+4. `scripts/search.py` - Search functions
+5. Create `scripts/types.py` for shared types
+
+### Test Coverage Targets
+- [ ] `scripts/embed.py` - 80% coverage
+- [ ] `scripts/store.py` - 70% coverage  
+- [ ] `scripts/search.py` - 60% coverage
+- [ ] `scripts/ingest.py` - 50% coverage
+- [ ] `scripts/cli.py` - 40% coverage
+
+### Known Issues to Fix
+- ONNX conversion stub exists but doesn't work yet
+- No pagination in `recall()` (returns all results)
+- No query timeout (could hang on huge DBs)
