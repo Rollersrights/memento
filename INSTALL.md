@@ -1,4 +1,4 @@
-# Memento Install Guide for Bob
+# Memento Install Guide
 
 Quick setup guide for getting Memento running on a new machine.
 
@@ -115,8 +115,8 @@ Add to crontab for auto-features:
 
 ## Federation Note
 
-If connecting to Rita's node, memories stay local to each machine. For shared memory, sync the `.db` file or use a shared network path.
+If connecting multiple agents/machines, memories stay local to each. For shared memory, sync the `.db` file or use a shared network path.
 
 ---
 
-**Questions?** Check `README.md` or ask Rita 💅
+**Questions?** Check `README.md` or open an issue.

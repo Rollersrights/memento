@@ -339,15 +339,15 @@ if __name__ == "__main__":
             "Good catch. Looking at what came back... [detailed explanation of memory system issues]"
         ),
         (
-            "ok, we need to deep dive the auto-store",
-            "Alright, let's make auto-store bulletproof... [comprehensive implementation plan]"
+            "ok, we need to improve the auto-store",
+            "Let's enhance the auto-store with better significance detection... [implementation details]"
         ),
         (
             "hi",
             "Hello! How can I help?"
         ),
         (
-            "remember this: the password is 12345",
+            "remember this: the example password is hunter2",
             "I'll store that securely."
         )
     ]
