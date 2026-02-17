@@ -1,10 +1,12 @@
-# MEMENTO MASTER ACTION PLAN & ROADMAP
-## Generated: February 17, 2026
-## Combined Research from 4 Sub-Agents
+# Roadmap
+
+> Memento development roadmap and milestones.
+
+*Last updated: 2026-02-17*
 
 ---
 
-## EXECUTIVE SUMMARY
+## Executive Summary
 
 This document combines the output from 4 parallel sub-agents:
 - **Code Review Agent** - Full codebase analysis

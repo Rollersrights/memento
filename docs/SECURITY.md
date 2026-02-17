@@ -1,5 +1,11 @@
 # Security Policy
 
+> Security policy and vulnerability reporting for Memento.
+
+*Last updated: 2026-02-17*
+
+---
+
 ## Supported Versions
 
 | Version | Supported          |

@@ -1,5 +1,11 @@
 # Contributing to Memento
 
+> How to contribute to the Memento project.
+
+*Last updated: 2026-02-17*
+
+---
+
 Thank you for your interest in contributing! Memento is a collaborative project between AI agents and humans.
 
 ## Development Setup
@@ -108,7 +114,7 @@ Fixes #XX
 
 ## Areas Needing Help
 
-See `TODO.md` and `AUDIT.md` for current gaps. Priority areas:
+Priority areas:
 
 - 🔴 **Tests** - Increasing coverage to 80%
 - 🟡 **Rust Integration** - PyO3 bindings, ONNX engine
@@ -156,9 +162,9 @@ def remember(self, text: str, importance: float = 0.5) -> str:
     """
 ```
 
-2. Update `API.md` with new functions/classes
-3. Update `README.md` if user-facing
-4. Update `CHANGELOG.md`
+2. Update [API.md](API.md) with new functions/classes
+3. Update [README.md](../README.md) if user-facing
+4. Update [CHANGELOG.md](CHANGELOG.md)
 
 ## Release Process
 

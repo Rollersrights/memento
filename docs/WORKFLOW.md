@@ -1,4 +1,10 @@
-# GitHub Workflow for Memento
+# Workflow
+
+> GitHub workflow and development process for Memento.
+
+*Last updated: 2026-02-17*
+
+---
 
 ## 🔄 Development Process
 

@@ -1,6 +1,17 @@
-# Memento Install Guide
+# Deployment
 
-Quick setup guide for getting Memento running on a new machine.
+> Installation and setup guide for Memento.
+
+*Last updated: 2026-02-17*
+
+---
+
+## Prerequisites
+
+- Python 3.8+
+- pip
+- ~500MB disk space (for model download)
+- (Optional) Rust toolchain for Rust acceleration
 
 ## Prerequisites
 
@@ -179,4 +190,4 @@ rm -rf ~/.memento
 
 ---
 
-**Questions?** Check `README.md` or open an issue.
+**Questions?** Check the [main README](../README.md) or open an issue.
