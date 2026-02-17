@@ -302,7 +302,20 @@ def _embed_onnx(texts: List[str]) -> List[List[float]]:
     session = _load_onnx_model()
     tokenizer = _get_onnx_tokenizer()
     
-    inputs = tokenizer(texts, padding=True, truncation=True, max_length=256, return_tensors='np')
+    # Process individually to avoid ONNX batch shape issues
+    # See Issue #38: ONNX has buffer reuse problems with variable batch sizes
+    if len(texts) == 1:
+        return _embed_onnx_single(texts[0], session, tokenizer)
+    
+    results = []
+    for text in texts:
+        results.append(_embed_onnx_single(text, session, tokenizer))
+    return results
+
+
+def _embed_onnx_single(text: str, session, tokenizer) -> List[float]:
+    """Embed a single text using ONNX."""
+    inputs = tokenizer(text, padding=True, truncation=True, max_length=256, return_tensors='np')
     
     ort_inputs = {
         'input_ids': inputs['input_ids'].astype(np.int64),
@@ -322,7 +335,7 @@ def _embed_onnx(texts: List[str]) -> List[List[float]]:
     # Normalize
     embeddings = embeddings / np.linalg.norm(embeddings, axis=1, keepdims=True)
     
-    return embeddings.tolist()
+    return embeddings[0].tolist()
 
 
 def _embed_pytorch(texts: List[str]) -> List[List[float]]:
