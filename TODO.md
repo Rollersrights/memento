@@ -15,8 +15,8 @@
 | Ticket | Description | Status | Assignee | Target |
 |--------|-------------|--------|----------|--------|
 | #19 | Test `embed.py` cache scenarios | [@Rita] | @Rita | 80% coverage - 5/6 tests pass |
-| #20 | Test `store.py` edge cases | [ ] | | 70% coverage |
-| #21 | Test `search.py` hybrid search | [ ] | | 60% coverage |
+| #20 | Test `store.py` edge cases | [@Rita] | @Rita | 70% coverage |
+| #21 | Test `search.py` hybrid search | [@Bob] | @Bob | 60% coverage |
 | #22 | Test `ingest.py` document loading | [ ] | | 50% coverage |
 | #23 | Test `cli.py` argument parsing | [ ] | | 40% coverage |
 | #24 | Test concurrent access | [ ] | | Threading safety |
